@@ -80,10 +80,11 @@ async def _snapshot() -> dict[str, Any]:
     out: dict[str, Any] = {"nodes": {}}
     for name, client in CLIENTS.items():
         try:
-            info, channels, balance = await asyncio.gather(
+            info, channels, balance, wallet = await asyncio.gather(
                 client.get_info(),
                 client.list_channels(),
                 client.channel_balance(),
+                client.wallet_balance(),
             )
             out["nodes"][name] = {
                 "pubkey": info.get("identity_pubkey", ""),
@@ -101,6 +102,7 @@ async def _snapshot() -> dict[str, Any]:
                     for ch in channels.get("channels", [])
                 ],
                 "balance_sat": int(balance.get("balance", 0)),
+                "wallet_sat": int(wallet.get("confirmed_balance", 0)),
             }
         except Exception as e:
             out["nodes"][name] = {"error": str(e)}
@@ -166,8 +168,23 @@ async def api_send(req: SendRequest) -> dict[str, Any]:
             record_payment(req.source, req.dest, req.amount_sat, pr, "", "failed", err)
             raise HTTPException(502, f"payment failed: {err}")
         phash = result.get("payment_hash", "")
+        route = result.get("payment_route", {})
+        hops = [
+            {
+                "pub_key": h.get("pub_key", ""),
+                "amt_to_forward": int(h.get("amt_to_forward", 0)),
+                "fee": int(h.get("fee", 0)),
+            }
+            for h in route.get("hops", [])
+        ]
         record_payment(req.source, req.dest, req.amount_sat, pr, phash, "success")
-        return {"status": "success", "payment_hash": phash, "payment_request": pr}
+        return {
+            "status": "success",
+            "payment_hash": phash,
+            "payment_request": pr,
+            "hops": hops,
+            "total_fees": int(route.get("total_fees", 0)),
+        }
     except HTTPException:
         raise
     except Exception as e:

@@ -10,92 +10,63 @@ Polar regtest の 3ノード(Alice/Bob/Carol) をビジュアル表示する Web
 - 永続化: SQLite (送金履歴)
 - 実行: Docker Compose (ローカル)
 
-## セットアップ手順
+## セットアップ手順 (全Docker構成)
 
-### 1. Polar インストール
+Polar GUI 不要。Docker Compose だけで完結。bitcoind + LND × 3 + app を一括起動。
 
-[Polar](https://lightningpolar.com/) をダウンロード→インストール。Docker Desktop が必要。
+### 必要なもの
+- Docker Desktop (Windows/Mac) または Docker Engine + Compose (Linux)
 
-### 2. ネットワーク作成
-
-1. Polar 起動 → Create Network
-2. ノード構成: LND × 3 (Alice, Bob, Carol)
-3. Start ボタンでネットワーク起動
-
-### 3. チャネル開設
-
-1. Alice → Bob: 1,000,000 sat (Alice の Local)
-2. Bob → Carol: 1,000,000 sat (Bob の Local)
-3. マイニング (Polar 内 Bitcoin Core → Mine 6 blocks)
-
-### 4. 認証情報の取得
-
-各ノードを右クリック → View Node Info → File Paths タブから以下を確認:
-
-- TLS Cert: `tls.cert` のフルパス
-- Macaroon: `admin.macaroon` のフルパス
-
-または、ノードを右クリック → Export → Linker Compatible で zip を取得し展開。
-
-`secrets/` ディレクトリに各ノード分を配置:
-
-```
-secrets/
-├── alice/
-│   ├── tls.cert
-│   └── admin.macaroon
-├── bob/
-│   ├── tls.cert
-│   └── admin.macaroon
-└── carol/
-    ├── tls.cert
-    └── admin.macaroon
-```
-
-### 5. REST ポート確認
-
-Polar のノード詳細 → Connect → REST タブで URL を確認。Polar デフォルト:
-
-- Alice: `https://127.0.0.1:8081`
-- Bob:   `https://127.0.0.1:8082`
-- Carol: `https://127.0.0.1:8083`
-
-### 6. .env 作成
-
-```bash
-cp .env.example .env
-# 必要に応じて REST URL / パスを編集
-```
-
-Docker から Polar (ホスト上) へアクセスする場合、`.env` の REST URL は `https://host.docker.internal:8081` 等に書き換える。
-
-### 7. 起動
-
-#### Docker (推奨)
+### 1. 起動
 
 ```bash
 docker compose up -d --build
 ```
 
-→ http://localhost:8000 を開く
+bitcoind / lnd-alice / lnd-bob / lnd-carol / app の5コンテナ起動。
 
-#### ローカル開発 (frontend hot reload)
+### 2. ネットワーク初期化 (初回のみ)
 
 ```bash
-# ルートの venv を利用
-source /c/Users/ryo11/Antigrabity/.venv/Scripts/activate
-pip install -r requirements.txt
-
-# Backend
-python main.py
-
-# 別ターミナル: Frontend (Vite dev server)
-cd frontend
-npm install
-npm run dev
+bash scripts/init-network.sh
 ```
 
-→ Vite dev: http://localhost:5173 (API は :8000 にプロキシ)
+実行内容:
+1. bitcoind ウォレット作成 + 101 blocks マイニング
+2. 各 LND ノードに 5 BTC 入金 + 6 blocks マイニング
+3. alice→bob, bob→carol ピア接続
+4. alice→bob (1,000,000 sat), bob→carol (1,000,000 sat) チャネル開設
+5. 6 blocks マイニングしてチャネルアクティブ化
+
+### 3. UI 確認
+
+http://localhost:8000 → 3ノード残高 + 送金UI
+
+### 4. 追加マイニング (チャネル状態を確定したい時)
+
+```bash
+docker compose exec -T bitcoind bitcoin-cli -regtest -rpcuser=polaruser -rpcpassword=polarpass \
+  generatetoaddress 6 $(docker compose exec -T bitcoind bitcoin-cli -regtest -rpcuser=polaruser -rpcpassword=polarpass getnewaddress)
+```
+
+### 5. 停止 / リセット
+
+```bash
+docker compose down            # 状態保持
+docker compose down -v         # ボリューム削除 (完全リセット)
+```
+
+## ローカル開発 (frontend hot reload)
+
+```bash
+source /c/Users/ryo11/Antigrabity/.venv/Scripts/activate
+pip install -r requirements.txt
+python main.py  # backend
+# 別端末
+cd frontend && npm install && npm run dev  # http://localhost:5173
+```
+
+backend の `.env` は LND コンテナを 直接参照する場合 `https://localhost:8081` 等。
 
 ## API
 

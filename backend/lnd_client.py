@@ -51,6 +51,11 @@ class LndClient:
         r.raise_for_status()
         return r.json()
 
+    async def wallet_balance(self) -> dict:
+        r = await self._client.get("/v1/balance/blockchain")
+        r.raise_for_status()
+        return r.json()
+
     async def add_invoice(self, value_sat: int, memo: str = "") -> dict:
         r = await self._client.post(
             "/v1/invoices",

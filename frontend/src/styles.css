@@ -1,39 +1,72 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
   background: #0d1117;
   color: #c9d1d9;
 }
 .app { max-width: 1100px; margin: 0 auto; padding: 24px; }
-h1 { margin: 0 0 8px; font-size: 22px; }
-.subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+h1 { margin: 0 0 4px; font-size: 24px; }
+.subtitle { color: #8b949e; font-size: 13px; margin-bottom: 16px; }
 
-.viz { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
-.node-circle { fill: #1f6feb; stroke: #79c0ff; stroke-width: 2; }
-.node-label { fill: #fff; font-size: 14px; font-weight: 600; text-anchor: middle; }
-.node-balance { fill: #adbac7; font-size: 11px; text-anchor: middle; }
-.channel-line { stroke: #30363d; stroke-width: 2; }
-.channel-line.active { stroke: #56d364; }
-.bal-local { fill: #56d364; }
-.bal-remote { fill: #f85149; }
+.banner { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+.error-banner { background: #f85149; color: #fff; }
+.info-banner { background: #1f6feb; color: #fff; }
 
-.controls { margin-top: 24px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
-.controls h2 { font-size: 16px; margin: 0 0 12px; }
-.row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-label { font-size: 12px; color: #8b949e; }
+.legend {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+}
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.legend .sep { color: #30363d; }
+
+.viz { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+.node-label { fill: #fff; font-size: 14px; font-weight: 700; text-anchor: middle; }
+.node-balance { fill: #c9d1d9; font-size: 11px; font-family: monospace; }
+.node-balance.dim { fill: #8b949e; }
+.ch-label { fill: #c9d1d9; font-size: 11px; font-weight: 600; }
+.ch-side { font-size: 10px; font-family: monospace; }
+.ch-local { fill: #56d364; }
+.ch-remote { fill: #f85149; }
+
+.help-box {
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 12px 16px; margin-top: 16px; font-size: 13px;
+}
+.help-box ul { margin: 8px 0 0; padding-left: 18px; }
+.help-box li { margin-bottom: 4px; color: #adbac7; }
+.help-box b { color: #c9d1d9; }
+
+.controls {
+  margin-top: 16px; background: #161b22; border: 1px solid #30363d;
+  border-radius: 8px; padding: 16px;
+}
+.controls h2 { font-size: 16px; margin: 0 0 8px; }
+.hint { color: #8b949e; font-size: 12px; margin: 0 0 12px; }
+.hint.inline { display: inline; font-weight: normal; }
+.hint code { background: #0d1117; padding: 1px 6px; border-radius: 3px; color: #e3b341; }
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+label { font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 4px; }
 select, input, button {
   background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
-  border-radius: 4px; padding: 6px 10px; font-size: 14px;
+  border-radius: 4px; padding: 6px 10px; font-size: 13px;
 }
-button { cursor: pointer; background: #238636; border-color: #2ea043; }
+button { cursor: pointer; background: #238636; border-color: #2ea043; color: #fff; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button:hover:not(:disabled) { background: #2ea043; }
 
-.log { margin-top: 24px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+.help {
+  display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+  background: #30363d; color: #c9d1d9; font-size: 10px; font-weight: bold;
+  text-align: center; line-height: 14px; cursor: help;
+}
+
+.ch-list { margin-top: 12px; }
+.ch-list-group { margin-bottom: 12px; padding: 8px; background: #0d1117; border-radius: 4px; }
+
+.log { margin-top: 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
 .log h2 { font-size: 16px; margin: 0 0 12px; }
 .log-entry { font-family: monospace; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #21262d; }
 .log-entry.success { color: #56d364; }
 .log-entry.failed, .log-entry.error { color: #f85149; }
-
-.error-banner { background: #f85149; color: #fff; padding: 8px 12px; border-radius: 4px; margin-bottom: 12px; }
