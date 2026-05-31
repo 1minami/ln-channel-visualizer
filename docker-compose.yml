@@ -1,0 +1,15 @@
+services:
+  ln-channel-visualizer:
+    build: .
+    container_name: ln-channel-visualizer
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/secrets:ro
+    # Polar はホスト上で動作 → コンテナから host.docker.internal でアクセス
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

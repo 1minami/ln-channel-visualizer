@@ -1,0 +1,11 @@
+.env
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+secrets/

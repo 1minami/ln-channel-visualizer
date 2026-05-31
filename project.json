@@ -1,0 +1,26 @@
+{
+    "name": "ln-channel-visualizer",
+    "slug": "ln-channel-visualizer",
+    "status": "development",
+    "description": "Polar Visual Channel Simulator — LND REST連動のチャネル可視化Web UI. FastAPI採用理由: WebSocketで残高ストリーム配信、React frontendへ静的配信、REST API送金トリガが必要なため.",
+    "stack": [
+        "python",
+        "fastapi",
+        "react",
+        "vite",
+        "sqlite",
+        "docker",
+        "lnd-grpc"
+    ],
+    "deploy_target": "local",
+    "category": "crypto/lightning",
+    "created": "2026-05-31",
+    "updated": "2026-05-31",
+    "tags": [
+        "lightning",
+        "polar",
+        "regtest",
+        "visualization",
+        "education"
+    ]
+}
