@@ -522,12 +522,26 @@ export default function App() {
       <div className="help-box">
         <strong>用語ミニ解説</strong>
         <ul>
-          <li><b>Capacity</b>: チャネルの総容量 = 開設時に lock した sat</li>
-          <li><b>Local balance (緑)</b>: 自分が今 <i>送れる</i> 量</li>
-          <li><b>Remote balance (赤)</b>: 相手が今 <i>送ってくる</i> ことができる量 = 自分の <i>インバウンド流動性</i></li>
-          <li><b>Off-chain (⚡)</b>: 全チャネルの local_balance 合計 = LNで送金できる総量</li>
+          <li><b>Capacity</b>: チャネルの総容量 = 開設時に lock した sat。開設後は増減せず、local と remote の間を移動するだけ</li>
+          <li><b>Local balance (緑)</b>: 自分が今 <i>送れる</i> 量 = アウトバウンド流動性</li>
+          <li><b>Remote balance (赤)</b>: 相手が今 <i>送ってくる</i> ことができる量 = 自分の <i>インバウンド流動性</i>（＝自分が<i>受け取れる</i>量）</li>
+          <li><b>push_amt</b>: チャネル開設時に相手側へ渡す初期残高。これがないと開設直後は受信側の inbound が 0 で受け取れない</li>
+          <li><b>Off-chain (⚡)</b>: 全チャネルの local_balance 合計 = LNで送金できる総量。送受信でチャネル内を移動するだけでオンチェーン取引は発生しない</li>
           <li><b>On-chain (⛓)</b>: ウォレットUTXOの確認済残高 = 新規チャネル開設の原資</li>
-          <li><b>マルチホップ</b>: 直接チャネルがなくても中継ノード経由で送金可能 (例: Alice→Bob→Carol)</li>
+          <li><b>マルチホップ</b>: 直接チャネルがなくても中継ノード経由で送金可能。中継ノードは <b>手数料</b> を取る</li>
+          <li><b>手数料 (fee)</b>: 中継ノードが1ホップごとに取る報酬。base fee（固定）+ rate（金額比例）。経路の合計が total_fees</li>
+          <li><b>CLTV / time_lock</b>: HTLC の有効期限（ブロック数）。各ホップで少しずつ積まれ、失敗時の資金回収を保証する安全装置</li>
+          <li><b>HTLC</b>: Hashed Time-Locked Contract。送金途中の「条件付き仮押さえ」。受取人が preimage を出せば確定(settle)、出せなければ期限切れで巻き戻る(fail)</li>
+        </ul>
+      </div>
+
+      <div className="help-box">
+        <strong>🔄 なぜリング接続？</strong>
+        <ul>
+          <li>各ノードを <b>環状</b> につなぐ（alice→bob→carol→dave→alice）。隣同士しか直接チャネルを持たない</li>
+          <li>離れたノード宛は <b>マルチホップ</b> になる。例: alice→carol は <b>2通りの2ホップ経路</b>（alice→bob→carol / alice→dave→carol）があり、LND が手数料・流動性で選ぶ</li>
+          <li>「経路選択」モードで両経路を比較できる。中継チャネルの local 残高が足りないと <i>no_route</i> になり、別経路や中継の流動性が必要だと体感できる</li>
+          <li>リングは <b>双方向に回れる</b>ため、流動性が一方向に偏っても逆回りで送れる場合がある（流動性管理の学習に向く）</li>
         </ul>
       </div>
 
@@ -728,6 +742,17 @@ export default function App() {
 
       <div className="log">
         <h2>🔬 HTLC イベント <span className="hint inline">(SubscribeHtlcEvents stream)</span></h2>
+        <p className="hint">
+          送金が経路上を進む様子をノード視点で実況。1回の送金で各中継ノードに forward → settle が並ぶ。
+          各 kind の意味:
+        </p>
+        <ul className="hint" style={{ marginTop: 0 }}>
+          <li>➡️ <b>forward_event</b>: HTLC を次ホップへ転送（中継開始 = 残高を仮押さえ）</li>
+          <li>✅ <b>settle_event</b>: preimage を受領し HTLC 確定（送金成立 → 残高が確定移動）</li>
+          <li>❌ <b>forward_fail_event</b>: 下流から fail が戻り転送を巻き戻し（仮押さえ解放）</li>
+          <li>🔗❌ <b>link_fail_event</b>: このノードの直近リンクで失敗（残高不足・チャネル inactive 等）</li>
+          <li>🏁 <b>final_htlc_event</b>: 最終ノードでの HTLC 完了（受取人側の確定/失敗）</li>
+        </ul>
         {htlcEvents.length === 0 && <div className="log-entry">イベント未受信。送金実行で forward/settle/fail が流れる</div>}
         {htlcEvents.map((e, i) => {
           const kindEmoji: Record<string, string> = {
@@ -737,9 +762,17 @@ export default function App() {
             link_fail_event: "🔗❌",
             final_htlc_event: "🏁",
           };
+          const kindDesc: Record<string, string> = {
+            forward_event: "次ホップへ転送",
+            settle_event: "確定 (送金成立)",
+            forward_fail_event: "転送失敗で巻き戻し",
+            link_fail_event: "リンクで失敗",
+            final_htlc_event: "最終ノードで完了",
+          };
           return (
             <div key={i} className="log-entry">
               {kindEmoji[e.kind] || "•"} <b style={{ color: colorOf(e.node) }}>{e.node}</b> {e.kind}
+              {kindDesc[e.kind] && <span style={{ color: "#8b949e" }}> — {kindDesc[e.kind]}</span>}
               {e.incoming_channel_id && ` · in_chan ${e.incoming_channel_id}`}
               {e.outgoing_channel_id && ` · out_chan ${e.outgoing_channel_id}`}
             </div>
