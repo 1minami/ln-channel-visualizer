@@ -1,3 +1,5 @@
+# このファイルは scripts/gen-compose.py が nodes.json から自動生成する.
+# 直接編集しない. ノード変更は nodes.json を編集して再生成すること.
 services:
   bitcoind:
     image: polarlightning/bitcoind:27.0
@@ -128,6 +130,40 @@ services:
     networks:
       - lnviz
 
+  lnd-dave:
+    image: polarlightning/lnd:0.18.3-beta
+    container_name: lnviz-lnd-dave
+    restart: unless-stopped
+    depends_on:
+      - bitcoind
+    command:
+      - lnd
+      - --noseedbackup
+      - --trickledelay=5000
+      - --alias=dave
+      - --externalip=lnd-dave
+      - --tlsextradomain=lnd-dave
+      - --tlsextradomain=host.docker.internal
+      - --listen=0.0.0.0:9735
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind:18443
+      - --bitcoind.rpcuser=polaruser
+      - --bitcoind.rpcpass=polarpass
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28334
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28335
+    volumes:
+      - lnd-dave-data:/home/lnd/.lnd
+    ports:
+      - "10004:10009"
+      - "8084:8080"
+      - "9738:9735"
+    networks:
+      - lnviz
+
   app:
     build: .
     container_name: lnviz-app
@@ -136,6 +172,7 @@ services:
       - lnd-alice
       - lnd-bob
       - lnd-carol
+      - lnd-dave
     environment:
       LND_ALICE_REST: https://lnd-alice:8080
       LND_ALICE_TLS_CERT_PATH: /lnd/alice/tls.cert
@@ -146,13 +183,20 @@ services:
       LND_CAROL_REST: https://lnd-carol:8080
       LND_CAROL_TLS_CERT_PATH: /lnd/carol/tls.cert
       LND_CAROL_MACAROON_PATH: /lnd/carol/data/chain/bitcoin/regtest/admin.macaroon
+      LND_DAVE_REST: https://lnd-dave:8080
+      LND_DAVE_TLS_CERT_PATH: /lnd/dave/tls.cert
+      LND_DAVE_MACAROON_PATH: /lnd/dave/data/chain/bitcoin/regtest/admin.macaroon
       POLL_INTERVAL: "3"
       LOG_LEVEL: INFO
+      BITCOIND_RPC_URL: http://bitcoind:18443
+      BITCOIND_RPC_USER: polaruser
+      BITCOIND_RPC_PASS: polarpass
     volumes:
       - ./data:/app/data
       - lnd-alice-data:/lnd/alice:ro
       - lnd-bob-data:/lnd/bob:ro
       - lnd-carol-data:/lnd/carol:ro
+      - lnd-dave-data:/lnd/dave:ro
     ports:
       - "8000:8000"
     networks:
@@ -163,6 +207,7 @@ volumes:
   lnd-alice-data:
   lnd-bob-data:
   lnd-carol-data:
+  lnd-dave-data:
 
 networks:
   lnviz:

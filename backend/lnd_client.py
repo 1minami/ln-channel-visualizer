@@ -73,6 +73,35 @@ class LndClient:
         r.raise_for_status()
         return r.json()
 
+    async def decode_pay_req(self, payment_request: str) -> dict:
+        r = await self._client.get(f"/v1/payreq/{payment_request}")
+        r.raise_for_status()
+        return r.json()
+
+    async def query_routes(
+        self, pub_key: str, amt_sat: int, fee_limit_sat: int | None = None
+    ) -> dict:
+        params: dict[str, str] = {"amt": str(amt_sat)}
+        if fee_limit_sat is not None:
+            params["fee_limit.fixed"] = str(fee_limit_sat)
+        r = await self._client.get(f"/v1/graph/routes/{pub_key}/{amt_sat}", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def send_to_route_v2(self, payment_hash_b64: str, route: dict) -> dict:
+        r = await self._client.post(
+            "/v2/router/route/send",
+            json={"payment_hash": payment_hash_b64, "route": route},
+            timeout=30.0,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    async def new_address(self) -> dict:
+        r = await self._client.get("/v1/newaddress")
+        r.raise_for_status()
+        return r.json()
+
     async def list_peers(self) -> dict:
         r = await self._client.get("/v1/peers")
         r.raise_for_status()
@@ -100,6 +129,16 @@ class LndClient:
         )
         r.raise_for_status()
         return r.json()
+
+    async def subscribe_htlc_events(self):
+        """Async generator yielding HTLC events from `/v2/router/htlcevents` (chunked JSON stream)."""
+        async with self._client.stream("GET", "/v2/router/htlcevents", timeout=None) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line:
+                    continue
+                yield line
 
     async def close_channel(self, funding_txid: str, output_index: int, force: bool = False) -> dict:
         # REST close は streaming response。最初のメッセージで close_pending を返すのを待つ

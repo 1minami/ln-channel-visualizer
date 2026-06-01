@@ -1,0 +1,6 @@
+[
+  { "name": "alice", "color": "#f78166", "rest": 8081, "grpc": 10001, "p2p": 9735 },
+  { "name": "bob",   "color": "#a371f7", "rest": 8082, "grpc": 10002, "p2p": 9736 },
+  { "name": "carol", "color": "#39c5cf", "rest": 8083, "grpc": 10003, "p2p": 9737 },
+  { "name": "dave",  "color": "#db61a2", "rest": 8084, "grpc": 10004, "p2p": 9738 }
+]

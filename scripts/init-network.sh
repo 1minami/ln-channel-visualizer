@@ -1,18 +1,31 @@
 #!/usr/bin/env bash
-# regtest LN ネットワーク初期化:
+# regtest LN ネットワーク初期化 (nodes.json 汎用 / リングトポロジ):
 # 1. bitcoind に wallet 作成 + 101 blocks マイニング
 # 2. 各 LND ノードに資金 (sendtoaddress + マイニング)
-# 3. alice→bob→carol ピア接続
-# 4. alice→bob, bob→carol チャネル開設 + 6 blocks マイニング
+# 3. リング状にピア接続 + チャネル開設 (node[i] -> node[i+1], 末尾 -> 先頭)
+# 4. 6 blocks マイニングでチャネルをアクティブ化
+#
+# ノード定義の single source of truth = ../nodes.json.
+# ノード追加時はこのスクリプトの変更不要 (nodes.json の name を自動で読む).
 set -euo pipefail
 # Git Bash (MSYS) が docker exec の引数パスを Windows パスに変換するのを防ぐ
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODES_JSON="$SCRIPT_DIR/../nodes.json"
+
+# nodes.json から name を順序どおり取得
+mapfile -t NAMES < <(grep -oP '"name":\s*"\K[^"]+' "$NODES_JSON")
+N=${#NAMES[@]}
+if [ "$N" -lt 2 ]; then
+  echo "need >= 2 nodes in nodes.json (got $N)" >&2
+  exit 1
+fi
+echo "nodes ($N): ${NAMES[*]}"
+
 BTC="docker compose exec -T bitcoind bitcoin-cli -regtest -rpcuser=polaruser -rpcpassword=polarpass"
-LNCLI_ALICE="docker compose exec -T lnd-alice lncli --lnddir=/home/lnd/.lnd --network=regtest"
-LNCLI_BOB="docker compose exec -T lnd-bob lncli --lnddir=/home/lnd/.lnd --network=regtest"
-LNCLI_CAROL="docker compose exec -T lnd-carol lncli --lnddir=/home/lnd/.lnd --network=regtest"
+lncli() { docker compose exec -T "lnd-$1" lncli --lnddir=/home/lnd/.lnd --network=regtest "${@:2}"; }
 
 echo "== wait for bitcoind =="
 until $BTC getblockchaininfo >/dev/null 2>&1; do sleep 1; done
@@ -26,43 +39,51 @@ echo "== mine 101 blocks (matures coinbase) =="
 $BTC generatetoaddress 101 "$MINING_ADDR" >/dev/null
 
 echo "== wait for LND nodes =="
-for n in alice bob carol; do
-  until docker compose exec -T lnd-$n lncli --lnddir=/home/lnd/.lnd --network=regtest getinfo >/dev/null 2>&1; do
-    sleep 2
-  done
+for n in "${NAMES[@]}"; do
+  until lncli "$n" getinfo >/dev/null 2>&1; do sleep 2; done
   echo "$n ready"
 done
 
-ALICE_PUB=$($LNCLI_ALICE getinfo | grep -oP '"identity_pubkey":\s*"\K[^"]+')
-BOB_PUB=$($LNCLI_BOB getinfo | grep -oP '"identity_pubkey":\s*"\K[^"]+')
-CAROL_PUB=$($LNCLI_CAROL getinfo | grep -oP '"identity_pubkey":\s*"\K[^"]+')
-echo "alice=$ALICE_PUB"
-echo "bob=$BOB_PUB"
-echo "carol=$CAROL_PUB"
+echo "== collect pubkeys =="
+declare -A PUB
+for n in "${NAMES[@]}"; do
+  PUB[$n]=$(lncli "$n" getinfo | grep -oP '"identity_pubkey":\s*"\K[^"]+')
+  echo "$n=${PUB[$n]}"
+done
 
 echo "== fund LND nodes =="
-for n in alice bob carol; do
-  ADDR=$(docker compose exec -T lnd-$n lncli --lnddir=/home/lnd/.lnd --network=regtest newaddress p2wkh | grep -oP '"address":\s*"\K[^"]+')
+for n in "${NAMES[@]}"; do
+  ADDR=$(lncli "$n" newaddress p2wkh | grep -oP '"address":\s*"\K[^"]+')
   echo "$n addr: $ADDR"
   $BTC sendtoaddress "$ADDR" 5 >/dev/null
 done
 $BTC generatetoaddress 6 "$MINING_ADDR" >/dev/null
 echo "funded + 6 blocks"
 
-echo "== connect peers =="
-$LNCLI_ALICE connect "$BOB_PUB@lnd-bob:9735" || true
-$LNCLI_BOB connect "$CAROL_PUB@lnd-carol:9735" || true
+echo "== connect peers (ring) =="
+for ((i = 0; i < N; i++)); do
+  a=${NAMES[$i]}
+  b=${NAMES[$(((i + 1) % N))]}
+  lncli "$a" connect "${PUB[$b]}@lnd-$b:9735" || true
+done
 sleep 2
 
-echo "== open channels =="
-$LNCLI_ALICE openchannel --node_key="$BOB_PUB" --local_amt=1000000 --push_amt=200000
-$LNCLI_BOB openchannel --node_key="$CAROL_PUB" --local_amt=1000000 --push_amt=200000
+echo "== open channels (ring) =="
+for ((i = 0; i < N; i++)); do
+  a=${NAMES[$i]}
+  b=${NAMES[$(((i + 1) % N))]}
+  echo "channel $a -> $b"
+  lncli "$a" openchannel --node_key="${PUB[$b]}" --local_amt=1000000 --push_amt=200000
+done
 
 echo "== mine 6 blocks (activate channels) =="
 $BTC generatetoaddress 6 "$MINING_ADDR" >/dev/null
 sleep 3
 
 echo "== final state =="
-$LNCLI_ALICE listchannels | grep -E '"active"|"capacity"|"local_balance"|"remote_pubkey"'
+for n in "${NAMES[@]}"; do
+  echo "-- $n channels --"
+  lncli "$n" listchannels | grep -E '"active"|"capacity"|"local_balance"|"remote_pubkey"' || true
+done
 
 echo "✅ done. open http://localhost:8000"

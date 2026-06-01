@@ -32,7 +32,22 @@ logger = logging.getLogger("ln-channel-visualizer")
 
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "3"))
 
-NODE_NAMES = ("alice", "bob", "carol")
+NODES_JSON = Path(__file__).parent / "nodes.json"
+
+
+def _node_defs() -> list[dict[str, Any]]:
+    """nodes.json を single source of truth として読む. 失敗時は空リスト."""
+    try:
+        import json as _json
+
+        return _json.loads(NODES_JSON.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error("failed to read %s: %s", NODES_JSON, e)
+        return []
+
+
+NODE_NAMES: tuple[str, ...] = tuple(n["name"] for n in _node_defs())
+NODE_COLORS: dict[str, str] = {n["name"]: n.get("color", "#8b949e") for n in _node_defs()}
 
 
 def _load_nodes() -> dict[str, LndNode]:
@@ -45,12 +60,40 @@ def _load_nodes() -> dict[str, LndNode]:
         if not (rest and cert and mac):
             logger.warning("node %s: env incomplete; skipping", name)
             continue
+        cert_p = Path(cert)
+        mac_p = Path(mac)
+        missing = [str(p) for p in (cert_p, mac_p) if not p.exists()]
+        if missing:
+            logger.error("node %s: file(s) not found, skipping: %s", name, ", ".join(missing))
+            continue
         nodes[name] = LndNode(name=name, rest_url=rest, tls_cert_path=cert, macaroon_path=mac)
     return nodes
 
 
+BITCOIND_RPC_URL = os.environ.get("BITCOIND_RPC_URL", "http://bitcoind:18443")
+BITCOIND_RPC_USER = os.environ.get("BITCOIND_RPC_USER", "polaruser")
+BITCOIND_RPC_PASS = os.environ.get("BITCOIND_RPC_PASS", "polarpass")
+
+
 CLIENTS: dict[str, LndClient] = {}
+PUBKEY_TO_NAME: dict[str, str] = {}
 WS_CONNECTIONS: set[WebSocket] = set()
+
+
+async def _resolve_pubkey_to_name(pubkey: str) -> str:
+    if not pubkey:
+        return ""
+    if pubkey in PUBKEY_TO_NAME:
+        return PUBKEY_TO_NAME[pubkey]
+    for name, c in CLIENTS.items():
+        try:
+            info = await c.get_info()
+            pk = info.get("identity_pubkey", "")
+            if pk:
+                PUBKEY_TO_NAME[pk] = name
+        except Exception:
+            pass
+    return PUBKEY_TO_NAME.get(pubkey, "")
 
 
 @asynccontextmanager
@@ -59,11 +102,23 @@ async def lifespan(app: FastAPI):
     for name, node in _load_nodes().items():
         CLIENTS[name] = LndClient(node)
         logger.info("LND client registered: %s -> %s", name, node.rest_url)
-    task = asyncio.create_task(_balance_broadcaster())
+    # pubkey キャッシュ warm-up
+    for name in list(CLIENTS):
+        try:
+            info = await CLIENTS[name].get_info()
+            pk = info.get("identity_pubkey", "")
+            if pk:
+                PUBKEY_TO_NAME[pk] = name
+        except Exception as e:
+            logger.warning("warm-up get_info failed (%s): %s", name, e)
+    tasks = [asyncio.create_task(_balance_broadcaster())]
+    for name in CLIENTS:
+        tasks.append(asyncio.create_task(_htlc_listener(name)))
     try:
         yield
     finally:
-        task.cancel()
+        for t in tasks:
+            t.cancel()
         for c in CLIENTS.values():
             await c.close()
 
@@ -74,6 +129,12 @@ app = FastAPI(title="ln-channel-visualizer", version="0.1.0", lifespan=lifespan)
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/nodes")
+def api_nodes() -> list[dict[str, str]]:
+    """フロントが描画順・色を取得するためのノード定義 (nodes.json 由来)."""
+    return [{"name": name, "color": NODE_COLORS.get(name, "#8b949e")} for name in NODE_NAMES]
 
 
 async def _snapshot() -> dict[str, Any]:
@@ -109,6 +170,63 @@ async def _snapshot() -> dict[str, Any]:
     return out
 
 
+RECENT_HTLC_EVENTS: list[dict[str, Any]] = []
+HTLC_MAX = 50
+
+
+async def _broadcast_to_ws(payload: dict) -> None:
+    dead: list[WebSocket] = []
+    for ws in WS_CONNECTIONS:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        WS_CONNECTIONS.discard(ws)
+
+
+async def _htlc_listener(node_name: str) -> None:
+    """1ノードの HTLC stream を読み続け WS に broadcast. 切断時は指数バックオフで再接続."""
+    import json as _json
+    backoff = 1.0
+    while True:
+        try:
+            client = CLIENTS[node_name]
+            async for line in client.subscribe_htlc_events():
+                try:
+                    raw = _json.loads(line)
+                except Exception:
+                    continue
+                # LND は {"result": {...}} 形式 (gRPC-gateway)
+                ev = raw.get("result", raw)
+                evt = {
+                    "node": node_name,
+                    "event_type": ev.get("event_type", ""),
+                    "incoming_channel_id": ev.get("incoming_channel_id", ""),
+                    "outgoing_channel_id": ev.get("outgoing_channel_id", ""),
+                    "timestamp_ns": ev.get("timestamp_ns", ""),
+                    "kind": next(
+                        (k for k in ("forward_event", "forward_fail_event", "settle_event", "link_fail_event", "final_htlc_event")
+                         if k in ev), "unknown"),
+                    "detail": ev,
+                }
+                RECENT_HTLC_EVENTS.append(evt)
+                del RECENT_HTLC_EVENTS[:-HTLC_MAX]
+                await _broadcast_to_ws({"htlc": evt})
+            backoff = 1.0
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.warning("htlc stream %s disconnected: %s; retry in %.1fs", node_name, e, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+
+
+@app.get("/api/htlc_events")
+def api_htlc_events() -> list[dict]:
+    return list(RECENT_HTLC_EVENTS[-HTLC_MAX:])
+
+
 async def _balance_broadcaster() -> None:
     while True:
         await asyncio.sleep(POLL_INTERVAL)
@@ -119,14 +237,7 @@ async def _balance_broadcaster() -> None:
         except Exception as e:
             logger.warning("snapshot failed: %s", e)
             continue
-        dead: list[WebSocket] = []
-        for ws in WS_CONNECTIONS:
-            try:
-                await ws.send_json(snap)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            WS_CONNECTIONS.discard(ws)
+        await _broadcast_to_ws({"snapshot": snap})
 
 
 @app.get("/api/snapshot")
@@ -192,6 +303,51 @@ async def api_send(req: SendRequest) -> dict[str, Any]:
         raise HTTPException(500, str(e))
 
 
+class PayInvoiceRequest(BaseModel):
+    source: str
+    payment_request: str
+
+
+@app.post("/api/pay_invoice")
+async def api_pay_invoice(req: PayInvoiceRequest) -> dict[str, Any]:
+    if req.source not in CLIENTS:
+        raise HTTPException(404, f"source node not found: {req.source}")
+    pr = req.payment_request.strip()
+    if not pr:
+        raise HTTPException(400, "payment_request empty")
+    src = CLIENTS[req.source]
+    try:
+        decoded = await src.decode_pay_req(pr)
+        dest_pub = decoded.get("destination", "")
+        amount = int(decoded.get("num_satoshis", 0))
+        dest_name = await _resolve_pubkey_to_name(dest_pub) or f"external({dest_pub[:10]}...)"
+        result = await src.send_payment_sync(pr)
+        err = result.get("payment_error", "")
+        if err:
+            record_payment(req.source, dest_name, amount, pr, "", "failed", err)
+            raise HTTPException(502, f"payment failed: {err}")
+        phash = result.get("payment_hash", "")
+        route = result.get("payment_route", {})
+        hops = [
+            {"pub_key": h.get("pub_key", ""), "amt_to_forward": int(h.get("amt_to_forward", 0)), "fee": int(h.get("fee", 0))}
+            for h in route.get("hops", [])
+        ]
+        record_payment(req.source, dest_name, amount, pr, phash, "success")
+        return {
+            "status": "success",
+            "payment_hash": phash,
+            "dest": dest_name,
+            "amount_sat": amount,
+            "hops": hops,
+            "total_fees": int(route.get("total_fees", 0)),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        record_payment(req.source, "?", 0, pr, "", "error", str(e))
+        raise HTTPException(500, str(e))
+
+
 class OpenChannelRequest(BaseModel):
     source: str
     dest: str
@@ -247,12 +403,130 @@ async def api_close_channel(req: CloseChannelRequest) -> dict[str, Any]:
         raise HTTPException(500, str(e))
 
 
+class RoutesRequest(BaseModel):
+    source: str
+    dest: str
+    amount_sat: int
+    fee_limit_sat: int | None = None
+
+
+@app.post("/api/routes")
+async def api_routes(req: RoutesRequest) -> dict[str, Any]:
+    if req.source not in CLIENTS or req.dest not in CLIENTS:
+        raise HTTPException(404, "node not found")
+    if req.source == req.dest:
+        raise HTTPException(400, "source and dest must differ")
+    if req.amount_sat <= 0:
+        raise HTTPException(400, "amount must be positive")
+    src = CLIENTS[req.source]
+    dst = CLIENTS[req.dest]
+    try:
+        dst_info = await dst.get_info()
+        dst_pubkey = dst_info["identity_pubkey"]
+        result = await src.query_routes(dst_pubkey, req.amount_sat, req.fee_limit_sat)
+        routes = []
+        for rt in result.get("routes", []):
+            hops_view = []
+            for h in rt.get("hops", []):
+                pk = h.get("pub_key", "")
+                hops_view.append({
+                    "pub_key": pk,
+                    "name": await _resolve_pubkey_to_name(pk) or pk[:10] + "...",
+                    "amt_to_forward": int(h.get("amt_to_forward", 0)),
+                    "fee": int(h.get("fee", 0)),
+                    "chan_id": h.get("chan_id", ""),
+                })
+            routes.append({
+                "total_fees": int(rt.get("total_fees", 0)),
+                "total_amt": int(rt.get("total_amt", 0)),
+                "total_time_lock": int(rt.get("total_time_lock", 0)),
+                "hops": hops_view,
+                "_raw": rt,
+            })
+        return {"routes": routes}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"LND error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+class SendRouteRequest(BaseModel):
+    source: str
+    dest: str
+    amount_sat: int
+    route: dict
+
+
+@app.post("/api/send_route")
+async def api_send_route(req: SendRouteRequest) -> dict[str, Any]:
+    import base64 as _b64
+    if req.source not in CLIENTS or req.dest not in CLIENTS:
+        raise HTTPException(404, "node not found")
+    src = CLIENTS[req.source]
+    dst = CLIENTS[req.dest]
+    try:
+        invoice = await dst.add_invoice(req.amount_sat, memo=f"route {req.source}->{req.dest}")
+        pr = invoice["payment_request"]
+        phash_b64 = invoice["r_hash"]  # base64 (REST)
+        # `_raw` キーが route に紛れていれば除去
+        route = {k: v for k, v in req.route.items() if not k.startswith("_")}
+        result = await src.send_to_route_v2(phash_b64, route)
+        failure = result.get("failure")
+        if failure:
+            record_payment(req.source, req.dest, req.amount_sat, pr, "", "failed", str(failure))
+            raise HTTPException(502, f"route send failed: {failure}")
+        record_payment(req.source, req.dest, req.amount_sat, pr, result.get("preimage", ""), "success")
+        return {"status": "success", "result": result}
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"LND error: {e.response.text}")
+    except Exception as e:
+        record_payment(req.source, req.dest, req.amount_sat, "", "", "error", str(e))
+        raise HTTPException(500, str(e))
+
+
+class MineRequest(BaseModel):
+    blocks: int = 6
+    to_node: str = "alice"
+
+
+async def _bitcoind_rpc(method: str, params: list) -> Any:
+    async with httpx.AsyncClient(
+        auth=(BITCOIND_RPC_USER, BITCOIND_RPC_PASS), timeout=20.0
+    ) as c:
+        r = await c.post(
+            BITCOIND_RPC_URL,
+            json={"jsonrpc": "1.0", "id": "lnviz", "method": method, "params": params},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("error"):
+            raise HTTPException(502, f"bitcoind RPC error: {data['error']}")
+        return data["result"]
+
+
+@app.post("/api/mine")
+async def api_mine(req: MineRequest) -> dict[str, Any]:
+    if req.blocks <= 0 or req.blocks > 1000:
+        raise HTTPException(400, "blocks must be 1..1000")
+    if req.to_node not in CLIENTS:
+        raise HTTPException(404, f"node not found: {req.to_node}")
+    try:
+        addr_resp = await CLIENTS[req.to_node].new_address()
+        addr = addr_resp["address"]
+        hashes = await _bitcoind_rpc("generatetoaddress", [req.blocks, addr])
+        return {"status": "ok", "blocks": len(hashes), "address": addr, "to_node": req.to_node}
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"bitcoind unreachable: {e}")
+
+
 @app.websocket("/ws/balances")
 async def ws_balances(ws: WebSocket) -> None:
     await ws.accept()
     WS_CONNECTIONS.add(ws)
     try:
-        await ws.send_json(await _snapshot())
+        await ws.send_json({"snapshot": await _snapshot()})
         while True:
             await ws.receive_text()  # keepalive
     except WebSocketDisconnect:
