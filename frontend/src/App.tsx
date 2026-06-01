@@ -366,10 +366,28 @@ export default function App() {
     }
   };
 
+  // ノード数に応じてリング半径・キャンバスをスケール (3〜6+ ノードで破綻しない)
+  const layout = useMemo(() => {
+    const n = Math.max(NODE_ORDER.length, 1);
+    const nodeR = n <= 4 ? 40 : 34;
+    const r = 110 + n * 24; // リング半径: ノード増で拡大
+    const margin = nodeR + 92; // 外向き残高ボックス + ラベル用の余白
+    const cx = r + margin;
+    const cy = r + margin;
+    const size = (r + margin) * 2;
+    return { n, nodeR, r, cx, cy, size };
+  }, [NODE_ORDER]);
+
   const positions = useMemo(
-    () => NODE_ORDER.map((_, i) => nodePosition(i, NODE_ORDER.length, 380, 240, 160)),
-    [NODE_ORDER],
+    () => NODE_ORDER.map((_, i) => nodePosition(i, NODE_ORDER.length, layout.cx, layout.cy, layout.r)),
+    [NODE_ORDER, layout],
   );
+
+  // 各ノードの中心から外向き単位ベクトル (残高ボックスをリング外側へ置く)
+  const outward = (i: number) => {
+    const angle = (i / Math.max(NODE_ORDER.length, 1)) * 2 * Math.PI - Math.PI / 2;
+    return { ux: Math.cos(angle), uy: Math.sin(angle) };
+  };
 
   const channelLines = useMemo(() => {
     if (!snap) return [];
@@ -410,7 +428,7 @@ export default function App() {
       </div>
 
       <div className="viz">
-        <svg viewBox="0 0 760 480" style={{ width: "100%", height: 480 }}>
+        <svg viewBox={`0 0 ${layout.size} ${layout.size}`} style={{ width: "100%", height: "auto", maxHeight: 600 }}>
           {/* チャネル線: 二色分割で local/remote 比率を可視化 */}
           {channelLines.map(({ from, fromName, to, toName, ch, key }) => {
             const p = positions[from];
@@ -421,6 +439,17 @@ export default function App() {
             const my = p.y + (q.y - p.y) * localFrac;
             const midX = (p.x + q.x) / 2;
             const midY = (p.y + q.y) / 2;
+            // ラベルを線の法線方向 (リング外側) に押し出して衝突回避
+            const dx = q.x - p.x;
+            const dy = q.y - p.y;
+            const len = Math.hypot(dx, dy) || 1;
+            let nx = -dy / len;
+            let ny = dx / len;
+            const outSign = (midX - layout.cx) * nx + (midY - layout.cy) * ny >= 0 ? 1 : -1;
+            nx *= outSign;
+            ny *= outSign;
+            const lx = midX + nx * 34;
+            const ly = midY + ny * 34;
             return (
               <g key={key}>
                 {/* local 部分 (緑) */}
@@ -429,17 +458,19 @@ export default function App() {
                 <line x1={mx} y1={my} x2={q.x} y2={q.y} stroke="#f85149" strokeWidth={6} strokeLinecap="round" />
                 {/* 分割マーカー */}
                 <circle cx={mx} cy={my} r={6} fill="#e3b341" stroke="#0d1117" strokeWidth={2} />
+                {/* ラベル引出し線 */}
+                <line x1={midX} y1={midY} x2={lx} y2={ly} stroke="#30363d" strokeWidth={1} />
                 {/* ラベル: 両ノード視点で送れる量 */}
-                <g transform={`translate(${midX}, ${midY})`}>
-                  <rect x={-90} y={-26} width={180} height={48} rx={6} fill="#161b22" stroke="#30363d" />
-                  <text x={0} y={-10} className="ch-label" textAnchor="middle">
-                    Cap {ch.capacity.toLocaleString()} sat {ch.active ? "🟢" : "⏳"}
+                <g transform={`translate(${lx}, ${ly})`}>
+                  <rect x={-76} y={-24} width={152} height={44} rx={6} fill="#161b22" stroke="#30363d" />
+                  <text x={0} y={-9} className="ch-label" textAnchor="middle">
+                    Cap {ch.capacity.toLocaleString()} {ch.active ? "🟢" : "⏳"}
                   </text>
-                  <text x={-85} y={10} className="ch-side ch-local" textAnchor="start">
-                    {fromName}→: {ch.local_balance.toLocaleString()}
+                  <text x={-71} y={9} className="ch-side ch-local" textAnchor="start">
+                    {fromName}→ {ch.local_balance.toLocaleString()}
                   </text>
-                  <text x={85} y={10} className="ch-side ch-remote" textAnchor="end">
-                    {toName}→: {ch.remote_balance.toLocaleString()}
+                  <text x={71} y={9} className="ch-side ch-remote" textAnchor="end">
+                    {toName}→ {ch.remote_balance.toLocaleString()}
                   </text>
                 </g>
               </g>
@@ -451,16 +482,20 @@ export default function App() {
             const p = positions[i];
             const off = node?.balance_sat ?? 0;
             const on = node?.wallet_sat ?? 0;
+            const { ux, uy } = outward(i);
+            // 残高ボックスをノードからリング外側へ配置 (隣ノード・線との重なり回避)
+            const bx = p.x + ux * (layout.nodeR + 34);
+            const by = p.y + uy * (layout.nodeR + 34);
             return (
               <g key={name}>
-                <circle cx={p.x} cy={p.y} r={44} fill={colorOf(name)} stroke="#fff" strokeWidth={3} />
+                <circle cx={p.x} cy={p.y} r={layout.nodeR} fill={colorOf(name)} stroke="#fff" strokeWidth={3} />
                 <text x={p.x} y={p.y + 5} className="node-label">{name.toUpperCase()}</text>
-                <g transform={`translate(${p.x}, ${p.y + 64})`}>
-                  <rect x={-72} y={-14} width={144} height={42} rx={4} fill="#161b22" stroke="#30363d" />
-                  <text x={0} y={0} className="node-balance" textAnchor="middle">
+                <g transform={`translate(${bx}, ${by})`}>
+                  <rect x={-72} y={-15} width={144} height={42} rx={4} fill="#161b22" stroke="#30363d" />
+                  <text x={0} y={-1} className="node-balance" textAnchor="middle">
                     ⚡ off-chain: {off.toLocaleString()}
                   </text>
-                  <text x={0} y={16} className="node-balance dim" textAnchor="middle">
+                  <text x={0} y={15} className="node-balance dim" textAnchor="middle">
                     ⛓ on-chain: {on.toLocaleString()}
                   </text>
                 </g>
