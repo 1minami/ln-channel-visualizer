@@ -29,6 +29,7 @@ h1 { margin: 0 0 4px; font-size: 24px; }
 .ch-side { font-size: 10px; font-family: monospace; }
 .ch-local { fill: #56d364; }
 .ch-remote { fill: #f85149; }
+.ch-policy { fill: #e3b341; font-size: 9px; font-family: monospace; }
 
 .help-box {
   background: #161b22; border: 1px solid #30363d; border-radius: 8px;

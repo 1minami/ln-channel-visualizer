@@ -46,8 +46,11 @@ def _node_defs() -> list[dict[str, Any]]:
         return []
 
 
-NODE_NAMES: tuple[str, ...] = tuple(n["name"] for n in _node_defs())
-NODE_COLORS: dict[str, str] = {n["name"]: n.get("color", "#8b949e") for n in _node_defs()}
+_NODE_DEFS = _node_defs()  # import 時に1回だけ読む
+NODE_NAMES: tuple[str, ...] = tuple(n["name"] for n in _NODE_DEFS)
+NODE_COLORS: dict[str, str] = {n["name"]: n.get("color", "#8b949e") for n in _NODE_DEFS}
+# Polar 内 LND は --listen=0.0.0.0:9735 + DNS名 lnd-<name> で解決可。p2p 公開ポートはホスト側のみ
+NODE_HOSTS: dict[str, str] = {n["name"]: f"lnd-{n['name']}" for n in _NODE_DEFS}
 
 
 def _load_nodes() -> dict[str, LndNode]:
@@ -133,8 +136,41 @@ def healthz() -> dict[str, str]:
 
 @app.get("/api/nodes")
 def api_nodes() -> list[dict[str, str]]:
-    """フロントが描画順・色を取得するためのノード定義 (nodes.json 由来)."""
-    return [{"name": name, "color": NODE_COLORS.get(name, "#8b949e")} for name in NODE_NAMES]
+    """フロントが描画順・色・peer host を取得するためのノード定義 (nodes.json 由来)."""
+    return [
+        {
+            "name": name,
+            "color": NODE_COLORS.get(name, "#8b949e"),
+            "host": NODE_HOSTS.get(name, f"lnd-{name}"),
+        }
+        for name in NODE_NAMES
+    ]
+
+
+# chan_id -> 自ノード視点ポリシー. regtest で変動しないため簡易キャッシュ
+CHAN_POLICY_CACHE: dict[str, dict[str, int]] = {}
+
+
+async def _chan_policy(client: LndClient, chan_id: str, my_pubkey: str) -> dict[str, int] | None:
+    """チャネルの「自分が課す」手数料ポリシーを抽出. 未確定/失敗時は None."""
+    if not chan_id or chan_id == "0":
+        return None
+    if chan_id in CHAN_POLICY_CACHE:
+        return CHAN_POLICY_CACHE[chan_id]
+    try:
+        edge = await client.get_chan_info(chan_id)
+    except Exception:
+        return None
+    pol = edge.get("node1_policy") if edge.get("node1_pub", "") == my_pubkey else edge.get("node2_policy")
+    if not pol:
+        return None
+    result = {
+        "base_fee_msat": int(pol.get("fee_base_msat", 0)),
+        "fee_rate_ppm": int(pol.get("fee_rate_milli_msat", 0)),
+        "cltv_delta": int(pol.get("time_lock_delta", 0)),
+    }
+    CHAN_POLICY_CACHE[chan_id] = result
+    return result
 
 
 async def _snapshot() -> dict[str, Any]:
@@ -147,10 +183,15 @@ async def _snapshot() -> dict[str, Any]:
                 client.channel_balance(),
                 client.wallet_balance(),
             )
+            chans = channels.get("channels", [])
+            my_pub = info.get("identity_pubkey", "")
+            policies = await asyncio.gather(
+                *[_chan_policy(client, str(ch.get("chan_id", "")), my_pub) for ch in chans]
+            )
             out["nodes"][name] = {
-                "pubkey": info.get("identity_pubkey", ""),
+                "pubkey": my_pub,
                 "alias": info.get("alias", name),
-                "num_channels": len(channels.get("channels", [])),
+                "num_channels": len(chans),
                 "channels": [
                     {
                         "remote_pubkey": ch.get("remote_pubkey", ""),
@@ -159,8 +200,10 @@ async def _snapshot() -> dict[str, Any]:
                         "remote_balance": int(ch.get("remote_balance", 0)),
                         "active": ch.get("active", False),
                         "channel_point": ch.get("channel_point", ""),
+                        "chan_id": str(ch.get("chan_id", "")),
+                        "policy": policies[idx],
                     }
-                    for ch in channels.get("channels", [])
+                    for idx, ch in enumerate(chans)
                 ],
                 "balance_sat": int(balance.get("balance", 0)),
                 "wallet_sat": int(wallet.get("confirmed_balance", 0)),
@@ -300,6 +343,33 @@ async def api_send(req: SendRequest) -> dict[str, Any]:
         raise
     except Exception as e:
         record_payment(req.source, req.dest, req.amount_sat, "", "", "error", str(e))
+        raise HTTPException(500, str(e))
+
+
+class InvoiceRequest(BaseModel):
+    node: str
+    amount_sat: int
+    memo: str = ""
+
+
+@app.post("/api/invoice")
+async def api_invoice(req: InvoiceRequest) -> dict[str, Any]:
+    """任意ノードで bolt11 を生成 (プル型送金の受取側)."""
+    if req.node not in CLIENTS:
+        raise HTTPException(404, f"node not found: {req.node}")
+    if req.amount_sat <= 0:
+        raise HTTPException(400, "amount must be positive")
+    try:
+        inv = await CLIENTS[req.node].add_invoice(req.amount_sat, memo=req.memo)
+        return {
+            "node": req.node,
+            "amount_sat": req.amount_sat,
+            "payment_request": inv.get("payment_request", ""),
+            "r_hash": inv.get("r_hash", ""),
+        }
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"LND error: {e.response.text}")
+    except Exception as e:
         raise HTTPException(500, str(e))
 
 

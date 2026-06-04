@@ -97,6 +97,12 @@ class LndClient:
         r.raise_for_status()
         return r.json()
 
+    async def get_chan_info(self, chan_id: str) -> dict:
+        """GET /v1/graph/edge/{chan_id} — チャネルの両方向ポリシー (fee/cltv) を取得."""
+        r = await self._client.get(f"/v1/graph/edge/{chan_id}")
+        r.raise_for_status()
+        return r.json()
+
     async def new_address(self) -> dict:
         r = await self._client.get("/v1/newaddress")
         r.raise_for_status()

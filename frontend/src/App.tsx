@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
+type ChanPolicy = { base_fee_msat: number; fee_rate_ppm: number; cltv_delta: number };
 type Channel = {
   remote_pubkey: string;
   capacity: number;
@@ -8,6 +9,8 @@ type Channel = {
   remote_balance: number;
   active: boolean;
   channel_point: string;
+  chan_id?: string;
+  policy?: ChanPolicy | null;
 };
 type NodeInfo = {
   pubkey?: string;
@@ -30,7 +33,7 @@ type Payment = {
 };
 type HistoryPoint = { t: number } & Record<string, number>;
 type Anim = { id: number; from: string; to: string };
-type NodeDef = { name: string; color: string };
+type NodeDef = { name: string; color: string; host?: string };
 type HtlcEvent = {
   node: string;
   event_type: string;
@@ -91,6 +94,7 @@ export default function App() {
     [nodeDefs],
   );
   const colorOf = (name: string) => COLORS[name] ?? FALLBACK_COLOR;
+  const hostOf = (name: string) => nodeDefs.find((d) => d.name === name)?.host ?? `lnd-${name}`;
 
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -119,6 +123,12 @@ export default function App() {
   const [routesLoading, setRoutesLoading] = useState(false);
   const [htlcEvents, setHtlcEvents] = useState<HtlcEvent[]>([]);
 
+  const [invNode, setInvNode] = useState<NodeName>("");
+  const [invAmount, setInvAmount] = useState(1000);
+  const [invMemo, setInvMemo] = useState("");
+  const [invResult, setInvResult] = useState("");
+  const [invBusy, setInvBusy] = useState(false);
+
   // ノード定義を取得し、各セレクタの初期値を設定 (nodes.json 由来)
   useEffect(() => {
     fetch("/api/nodes")
@@ -131,8 +141,9 @@ export default function App() {
           setDest(names[names.length - 1]);
           setChSource(names[0]);
           setChDest(names[1]);
-          setChHost(`lnd-${names[1]}`);
+          setChHost(defs.find((d) => d.name === names[1])?.host ?? `lnd-${names[1]}`);
           setMineNode(names[0]);
+          setInvNode(names[names.length - 1]); // 受取側を既定に
         }
       })
       .catch(() => setError("ノード定義取得失敗 (/api/nodes)"));
@@ -366,6 +377,45 @@ export default function App() {
     }
   };
 
+  const genInvoice = async () => {
+    setInvBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/api/invoice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ node: invNode, amount_sat: invAmount, memo: invMemo }),
+      });
+      if (!r.ok) setError(humanizePaymentError(await r.text()));
+      else {
+        const body = await r.json();
+        setInvResult(body.payment_request || "");
+        setInfo(`📨 ${invNode} で ${invAmount} sat のインボイス生成`);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setInvBusy(false);
+    }
+  };
+
+  const copyInvoice = async () => {
+    if (!invResult) return;
+    try {
+      await navigator.clipboard.writeText(invResult);
+      setInfo("📋 bolt11 をコピー");
+    } catch {
+      setInfo("コピー不可 → テキストを手動選択してください");
+    }
+  };
+
+  const useInvoiceInExternal = () => {
+    if (!invResult) return;
+    setSendMode("external_invoice");
+    setExtInvoice(invResult);
+    setInfo("外部 bolt11 貼付モードにセット. From を受取側以外にして支払う");
+  };
+
   // ノード数に応じてリング半径・キャンバスをスケール (3〜6+ ノードで破綻しない)
   const layout = useMemo(() => {
     const n = Math.max(NODE_ORDER.length, 1);
@@ -462,7 +512,15 @@ export default function App() {
                 <line x1={midX} y1={midY} x2={lx} y2={ly} stroke="#30363d" strokeWidth={1} />
                 {/* ラベル: 両ノード視点で送れる量 */}
                 <g transform={`translate(${lx}, ${ly})`}>
-                  <rect x={-76} y={-24} width={152} height={44} rx={6} fill="#161b22" stroke="#30363d" />
+                  <rect
+                    x={-76}
+                    y={-24}
+                    width={152}
+                    height={ch.policy ? 60 : 44}
+                    rx={6}
+                    fill="#161b22"
+                    stroke="#30363d"
+                  />
                   <text x={0} y={-9} className="ch-label" textAnchor="middle">
                     Cap {ch.capacity.toLocaleString()} {ch.active ? "🟢" : "⏳"}
                   </text>
@@ -472,6 +530,11 @@ export default function App() {
                   <text x={71} y={9} className="ch-side ch-remote" textAnchor="end">
                     {toName}→ {ch.remote_balance.toLocaleString()}
                   </text>
+                  {ch.policy && (
+                    <text x={0} y={28} className="ch-policy" textAnchor="middle">
+                      {fromName} fee {ch.policy.base_fee_msat}msat + {ch.policy.fee_rate_ppm}ppm · cltv {ch.policy.cltv_delta}
+                    </text>
+                  )}
                 </g>
               </g>
             );
@@ -644,6 +707,51 @@ export default function App() {
       </div>
 
       <div className="controls">
+        <h2>📨 インボイス生成 <span className="hint inline">(プル型送金の受取側)</span></h2>
+        <p className="hint">
+          受取ノードで bolt11 を発行 → 「外部送金にセット」で別ノードから支払うとプル型送金を体感できる。
+        </p>
+        <div className="row">
+          <label>受取ノード</label>
+          <select value={invNode} onChange={(e) => setInvNode(e.target.value as NodeName)}>
+            {NODE_ORDER.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <label>Amount (sat)</label>
+          <input
+            type="number"
+            value={invAmount}
+            min={1}
+            onChange={(e) => setInvAmount(parseInt(e.target.value || "0", 10))}
+          />
+          <label>Memo</label>
+          <input
+            type="text"
+            value={invMemo}
+            placeholder="(任意)"
+            onChange={(e) => setInvMemo(e.target.value)}
+          />
+          <button onClick={genInvoice} disabled={invBusy || !invNode}>
+            {invBusy ? "生成中..." : "生成"}
+          </button>
+        </div>
+        {invResult && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <textarea
+              value={invResult}
+              readOnly
+              rows={3}
+              style={{ flex: 1, fontFamily: "monospace", fontSize: "0.85em" }}
+              onFocus={(e) => e.target.select()}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <button onClick={copyInvoice}>コピー</button>
+              <button onClick={useInvoiceInExternal}>外部送金にセット</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="controls">
         <h2>🔗 チャネル開閉</h2>
         <p className="hint">
           開設後 Polar の bitcoind で <code>6 blocks</code> マイニングが必要 →
@@ -655,7 +763,14 @@ export default function App() {
             {NODE_ORDER.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           <label>To</label>
-          <select value={chDest} onChange={(e) => setChDest(e.target.value as NodeName)}>
+          <select
+            value={chDest}
+            onChange={(e) => {
+              const v = e.target.value as NodeName;
+              setChDest(v);
+              setChHost(hostOf(v)); // peer host を自動補完 (手動編集も可)
+            }}
+          >
             {NODE_ORDER.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           <label>Funding (sat) <Help text="チャネル開設時に lock する自分側資金. 最小 ~20000" /></label>

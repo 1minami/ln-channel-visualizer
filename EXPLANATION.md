@@ -130,7 +130,7 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
 ### 品質
 - 🔴 **Web アプリに認証がない** — `/api/send`・`/api/channels/close`・`/api/mine` が無防備。localhost 限定の学習用なら許容だが、ネットワーク公開時は資金移動・チャネル破棄が誰でも可能。最低限 LAN バインド限定 or トークンを。
 - 🟡 **`send_payment_sync` が legacy API** (`/v1/channels/transactions`) — 単一経路・MPP 非対応。学習用途では問題ないが、`/v2/router/send` への移行で多重経路・部分送金も学べる。
-- 🟡 **`_node_defs()` を import 時に2回読む** — `NODE_NAMES` と `NODE_COLORS` で別々に `read_text`。1回読んで使い回せばよい（軽微）。
+- ✅ **`_node_defs()` を import 時に2回読む** — 解消済み。`_NODE_DEFS` で1回読み `NODE_NAMES`/`NODE_COLORS`/`NODE_HOSTS` を生成。
 - 🟡 **`_resolve_pubkey_to_name` がキャッシュミス時に全ノード get_info** — 外部 pubkey は永久にキャッシュされず、毎回全ノードへ問い合わせる。外部宛は一度「未解決」をキャッシュして抑制を。
 - 🟢 **フロントの history が削除ノードの key を残す** — セッション中にノードを減らすと stale データが残る（実運用上ほぼ起きない）。
 
@@ -147,10 +147,11 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
 
 ## 7. ロードマップ
 
-### Phase 1（すぐやる・低コスト高効果）
-- **インボイス生成 UI** — 任意ノードで bolt11 を作って表示。「外部 bolt11 貼付」モードの相方になり、プル型送金を体感しやすい。期待効果: 学習価値↑。工数 **S**。
-- **peer host 自動補完** — `/api/nodes` に `p2p`/host を載せ、チャネル開設フォームの Peer host を自動入力。誤入力での開設失敗を減らす。工数 **S**。
-- **チャネルポリシー表示** — 各チャネルの base_fee / fee_rate / CLTV delta を線ラベルに。手数料がどう決まるか見える。工数 **S/M**。
+### Phase 1（実装済み ✅）
+- ✅ **インボイス生成 UI** — 「📨 インボイス生成」パネル。任意ノードで bolt11 を発行 → コピー / 「外部送金にセット」で `external_invoice` モードへ流用。backend `POST /api/invoice`。
+- ✅ **peer host 自動補完** — `/api/nodes` が `host`（= `lnd-<name>`）を返す。チャネル開設フォームの「To」変更で Peer host を自動入力（手動編集も可）。
+  - 補足: Polar 内 LND は全ノード `--listen=0.0.0.0:9735`。コンテナ間は DNS 名 `lnd-<name>` で解決でき p2p 公開ポート不要。
+- ✅ **チャネルポリシー表示** — 各チャネル線ラベル最下行に `{node} fee {base}msat + {ppm}ppm · cltv {delta}`。backend `_snapshot` が `chan_id` と「自分が課す」ポリシーを `/v1/graph/edge/{chan_id}` から取得（`CHAN_POLICY_CACHE` で再取得抑制）。
 
 ### Phase 2（中工数・価値大）
 - **リバランス支援（循環送金）** — リング上を1周する自己送金で流動性を均す機能。`no_route` 解消を能動的に学べる。工数 **M**。
