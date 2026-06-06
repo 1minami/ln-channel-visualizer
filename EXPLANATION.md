@@ -154,12 +154,17 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
 - ✅ **チャネルポリシー表示** — 各チャネル線ラベル最下行に `{node} fee {base}msat + {ppm}ppm · cltv {delta}`。backend `_snapshot` が `chan_id` と「自分が課す」ポリシーを `/v1/graph/edge/{chan_id}` から取得（`CHAN_POLICY_CACHE` で再取得抑制）。
 
 ### 学習ミッション（実装済み ✅）
-- ✅ **ガイド式ミッション4課題** — 「🎯 学習ミッション」パネル。既存操作を題材に自動でチェックが点く。
+- ✅ **ガイド式ミッション7課題** — 「🎯 学習ミッション」パネル。既存操作を題材に自動でチェックが点く。
   進捗はセッション内のみ（リロードでリセット）。判定は frontend 完結（`frontend/src/missions.ts`）、backend 変更なし。
   - ① はじめての送金（alice→bob）/ ② インボイスで受け取る（bob 生成→alice が pay_invoice）
   - ③ マルチホップ（alice→carol, hops≥2）/ ④ inbound 不足を体験して解消（carol 宛 fail→success）
+  - ⑤ 手数料を払う（送金成功かつ `fee > 0` = マルチホップで中継料を体感）
+  - ⑥ 2経路を制覇（alice→carol を **bob 経由**・**dave 経由** 両方成功。`path` に bob/dave を含むのを観測してフラグ化）
+  - ⑦ 双方向リング（alice→carol と carol→alice の両方向を成功）
   - 判定材料は送金系 API 応答（`/api/send`・`/api/pay_invoice`・`/api/send_route` の status/dest/hops）。
-    課題④は「carol 宛 fail 観測」フラグ（`carolFailSeen`）を経た success で達成。
+    ⑤⑦ のため `LastSend` に `fee`（= `total_fees`）と `path`（経由ノード名列）を追加し、送金ハンドラから渡す。
+    課題④は「carol 宛 fail 観測」フラグ（`carolFailSeen`）を経た success で達成。⑥⑦ も同様に `flags` で複数条件を蓄積。
+  - 解説タブ（📖 解説）に HTLC・流動性管理・ミッション攻略ガイドの help-box を同梱。
   - 詳細仕様は `SPEC.md`。
 
 ### Phase 2（中工数・価値大）

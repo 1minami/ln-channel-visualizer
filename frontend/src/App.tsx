@@ -1012,6 +1012,41 @@ export default function App() {
           <li>リングは <b>双方向に回れる</b>ため、流動性が一方向に偏っても逆回りで送れる場合がある（流動性管理の学習に向く）</li>
         </ul>
       </div>
+
+      <div className="help-box">
+        <strong>🔗 HTLC — 送金が経路を通る仕組み</strong>
+        <ul>
+          <li><b>代金引換の宅配便</b>と同じ。送金中、お金は経路上で「条件付きの仮押さえ（宙吊り）」になる</li>
+          <li><b>preimage</b>: ハッシュの逆像 = 受取人だけが持つ「判子」。これを提示すると各ホップが順に確定する</li>
+          <li><b>settle（確定）</b>: 受取人が preimage を出す → 中継業者が差出人側から精算。送金成立</li>
+          <li><b>fail（巻き戻し）</b>: 判子が出ない / 経路途中で失敗 → <b>CLTV（time_lock）</b> 期限切れで全ホップが巻き戻り、資金は差出人に戻る</li>
+          <li><b>なぜ安全か</b>: 「全員が settle」か「全員が巻き戻り」のどちらか。途中の中継ノードがお金を持ち逃げできない</li>
+          <li>UI の「HTLC イベント」欄で <i>forward</i>（転送）→ <i>settle</i> / <i>fail</i> の流れをノード視点で観察できる</li>
+        </ul>
+      </div>
+
+      <div className="help-box">
+        <strong>💧 流動性管理 — なぜ no_route になるのか</strong>
+        <ul>
+          <li><b>outbound（送れる量）</b> = 自分側の local。<b>inbound（受け取れる量）</b> = 相手側の local（自分の remote）</li>
+          <li>開設直後は相手側が 0 → <b>受け取れない</b>。<b>push_amt</b> で初期配分するか、一度自分から送って inbound を作る</li>
+          <li><b>no_route</b> の典型: 宛先までの経路はあるが、途中の中継チャネルの local 残高が送金額に足りない</li>
+          <li>同じ方向に送り続けると中継の local が枯れる → <b>逆回り経路</b>や<b>別経路</b>で迂回、または中継に流動性を用意する</li>
+          <li>流動性は「どこに」「どちら向きに」あるかが鍵。残高は減らないが<b>偏る</b>。リバランス（循環送金）で均せる</li>
+        </ul>
+      </div>
+
+      <div className="help-box">
+        <strong>🎯 学習ミッション攻略ガイド</strong>
+        <ul>
+          <li><b>①②</b> 内部送金 alice→bob、次にインボイス生成（bob）→「外部送金にセット」→ alice で支払い（プル型を体感）</li>
+          <li><b>③⑤</b> alice→carol を送金 → 2ホップ経由で届き <b>手数料</b>が発生（③マルチホップ + ⑤手数料 が同時に点く）</li>
+          <li><b>⑥</b>「経路選択」モードで alice→carol を検索 → <b>bob 経由</b>と<b>dave 経由</b>を両方送金成功させる</li>
+          <li><b>⑦</b> alice→carol と <b>carol→alice</b> を両方向に送る（双方向リングの流動性を体感）</li>
+          <li><b>④</b> carol 宛を一度 <i>no_route</i> 等で失敗させた後、inbound を作って再送 → 成功で達成</li>
+          <li>進捗はセッション内のみ。リロードでリセットされる</li>
+        </ul>
+      </div>
       </>)}
 
       </main>
