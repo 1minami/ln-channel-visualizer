@@ -130,6 +130,9 @@ export default function App() {
   const [invResult, setInvResult] = useState("");
   const [invBusy, setInvBusy] = useState(false);
 
+  // サイドバー開閉 (狭幅では折りたたみ運用)
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   // 学習ミッション: 達成状態（セッション内のみ。リロードでリセット）
   const [missionDone, setMissionDone] = useState<Record<string, boolean>>({});
   const [missionOpen, setMissionOpen] = useState<Record<string, boolean>>({});
@@ -496,15 +499,26 @@ export default function App() {
   }, [snap, NODE_ORDER]);
 
   return (
-    <div className="app">
-      <h1>⚡ LN Channel Visualizer</h1>
-      <div className="subtitle">
-        Lightning Network 学習用 — Polar regtest {NODE_ORDER.length}ノード (
-        {NODE_ORDER.map((n) => n[0].toUpperCase() + n.slice(1)).join(" / ")})
-      </div>
+    <div className={`app${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+      <header className="topbar">
+        <button
+          className="sidebar-toggle"
+          onClick={() => setSidebarOpen((v) => !v)}
+          title={sidebarOpen ? "操作パネルを隠す" : "操作パネルを表示"}
+        >
+          {sidebarOpen ? "◀ パネル" : "▶ パネル"}
+        </button>
+        <div>
+          <h1>⚡ LN Channel Visualizer</h1>
+          <div className="subtitle">
+            Lightning Network 学習用 — Polar regtest {NODE_ORDER.length}ノード (
+            {NODE_ORDER.map((n) => n[0].toUpperCase() + n.slice(1)).join(" / ")})
+          </div>
+        </div>
+      </header>
 
-      {error && <div className="banner error-banner">⚠️ {error}</div>}
-      {info && <div className="banner info-banner">{info}</div>}
+      <div className="layout">
+      <aside className="sidebar">
 
       {/* 学習ミッション */}
       <div className="controls missions">
@@ -536,150 +550,6 @@ export default function App() {
             </div>
           );
         })}
-      </div>
-
-      {/* 凡例 */}
-      <div className="legend">
-        {nodeDefs.map((n) => (
-          <span key={n.name}>
-            <span className="dot" style={{ background: n.color }} />{" "}
-            {n.name[0].toUpperCase() + n.name.slice(1)}
-          </span>
-        ))}
-        <span className="sep">|</span>
-        <span><span className="dot" style={{ background: "#56d364" }} /> Local (自分側残高 = 送れる量)</span>
-        <span><span className="dot" style={{ background: "#f85149" }} /> Remote (相手側残高 = 受け取れる量)</span>
-      </div>
-
-      <div className="viz">
-        <svg viewBox={`0 0 ${layout.size} ${layout.size}`} style={{ width: "100%", height: "auto", maxHeight: 600 }}>
-          {/* チャネル線: 二色分割で local/remote 比率を可視化 */}
-          {channelLines.map(({ from, fromName, to, toName, ch, key }) => {
-            const p = positions[from];
-            const q = positions[to];
-            const total = ch.capacity || 1;
-            const localFrac = ch.local_balance / total; // fromName 視点
-            const mx = p.x + (q.x - p.x) * localFrac;
-            const my = p.y + (q.y - p.y) * localFrac;
-            const midX = (p.x + q.x) / 2;
-            const midY = (p.y + q.y) / 2;
-            // ラベルを線の法線方向 (リング外側) に押し出して衝突回避
-            const dx = q.x - p.x;
-            const dy = q.y - p.y;
-            const len = Math.hypot(dx, dy) || 1;
-            let nx = -dy / len;
-            let ny = dx / len;
-            const outSign = (midX - layout.cx) * nx + (midY - layout.cy) * ny >= 0 ? 1 : -1;
-            nx *= outSign;
-            ny *= outSign;
-            const lx = midX + nx * 34;
-            const ly = midY + ny * 34;
-            return (
-              <g key={key}>
-                {/* local 部分 (緑) */}
-                <line x1={p.x} y1={p.y} x2={mx} y2={my} stroke="#56d364" strokeWidth={6} strokeLinecap="round" />
-                {/* remote 部分 (赤) */}
-                <line x1={mx} y1={my} x2={q.x} y2={q.y} stroke="#f85149" strokeWidth={6} strokeLinecap="round" />
-                {/* 分割マーカー */}
-                <circle cx={mx} cy={my} r={6} fill="#e3b341" stroke="#0d1117" strokeWidth={2} />
-                {/* ラベル引出し線 */}
-                <line x1={midX} y1={midY} x2={lx} y2={ly} stroke="#30363d" strokeWidth={1} />
-                {/* ラベル: 両ノード視点で送れる量 */}
-                <g transform={`translate(${lx}, ${ly})`}>
-                  <rect
-                    x={-76}
-                    y={-24}
-                    width={152}
-                    height={ch.policy ? 60 : 44}
-                    rx={6}
-                    fill="#161b22"
-                    stroke="#30363d"
-                  />
-                  <text x={0} y={-9} className="ch-label" textAnchor="middle">
-                    Cap {ch.capacity.toLocaleString()} {ch.active ? "🟢" : "⏳"}
-                  </text>
-                  <text x={-71} y={9} className="ch-side ch-local" textAnchor="start">
-                    {fromName}→ {ch.local_balance.toLocaleString()}
-                  </text>
-                  <text x={71} y={9} className="ch-side ch-remote" textAnchor="end">
-                    {toName}→ {ch.remote_balance.toLocaleString()}
-                  </text>
-                  {ch.policy && (
-                    <text x={0} y={28} className="ch-policy" textAnchor="middle">
-                      {fromName} fee {ch.policy.base_fee_msat}msat + {ch.policy.fee_rate_ppm}ppm · cltv {ch.policy.cltv_delta}
-                    </text>
-                  )}
-                </g>
-              </g>
-            );
-          })}
-          {/* ノード */}
-          {NODE_ORDER.map((name, i) => {
-            const node = snap?.nodes[name];
-            const p = positions[i];
-            const off = node?.balance_sat ?? 0;
-            const on = node?.wallet_sat ?? 0;
-            const { ux, uy } = outward(i);
-            // 残高ボックスをノードからリング外側へ配置 (隣ノード・線との重なり回避)
-            const bx = p.x + ux * (layout.nodeR + 34);
-            const by = p.y + uy * (layout.nodeR + 34);
-            return (
-              <g key={name}>
-                <circle cx={p.x} cy={p.y} r={layout.nodeR} fill={colorOf(name)} stroke="#fff" strokeWidth={3} />
-                <text x={p.x} y={p.y + 5} className="node-label">{name.toUpperCase()}</text>
-                <g transform={`translate(${bx}, ${by})`}>
-                  <rect x={-72} y={-15} width={144} height={42} rx={4} fill="#161b22" stroke="#30363d" />
-                  <text x={0} y={-1} className="node-balance" textAnchor="middle">
-                    ⚡ off-chain: {off.toLocaleString()}
-                  </text>
-                  <text x={0} y={15} className="node-balance dim" textAnchor="middle">
-                    ⛓ on-chain: {on.toLocaleString()}
-                  </text>
-                </g>
-              </g>
-            );
-          })}
-          {/* 送金アニメ */}
-          {anims.map((a) => {
-            const fi = NODE_ORDER.indexOf(a.from as NodeName);
-            const ti = NODE_ORDER.indexOf(a.to as NodeName);
-            if (fi < 0 || ti < 0) return null;
-            const p = positions[fi];
-            const q = positions[ti];
-            return (
-              <circle key={a.id} r={10} fill="#ffd33d" stroke="#fff" strokeWidth={2}>
-                <animate attributeName="cx" from={p.x} to={q.x} dur={`${HOP_MS}ms`} fill="freeze" />
-                <animate attributeName="cy" from={p.y} to={q.y} dur={`${HOP_MS}ms`} fill="freeze" />
-              </circle>
-            );
-          })}
-        </svg>
-      </div>
-
-      <div className="help-box">
-        <strong>用語ミニ解説</strong>
-        <ul>
-          <li><b>Capacity</b>: チャネルの総容量 = 開設時に lock した sat。開設後は増減せず、local と remote の間を移動するだけ</li>
-          <li><b>Local balance (緑)</b>: 自分が今 <i>送れる</i> 量 = アウトバウンド流動性</li>
-          <li><b>Remote balance (赤)</b>: 相手が今 <i>送ってくる</i> ことができる量 = 自分の <i>インバウンド流動性</i>（＝自分が<i>受け取れる</i>量）</li>
-          <li><b>push_amt</b>: チャネル開設時に相手側へ渡す初期残高。これがないと開設直後は受信側の inbound が 0 で受け取れない</li>
-          <li><b>Off-chain (⚡)</b>: 全チャネルの local_balance 合計 = LNで送金できる総量。送受信でチャネル内を移動するだけでオンチェーン取引は発生しない</li>
-          <li><b>On-chain (⛓)</b>: ウォレットUTXOの確認済残高 = 新規チャネル開設の原資</li>
-          <li><b>マルチホップ</b>: 直接チャネルがなくても中継ノード経由で送金可能。中継ノードは <b>手数料</b> を取る</li>
-          <li><b>手数料 (fee)</b>: 中継ノードが1ホップごとに取る報酬。base fee（固定）+ rate（金額比例）。経路の合計が total_fees</li>
-          <li><b>CLTV / time_lock</b>: HTLC の有効期限（ブロック数）。各ホップで少しずつ積まれ、失敗時の資金回収を保証する安全装置</li>
-          <li><b>HTLC</b>: Hashed Time-Locked Contract。送金途中の「条件付き仮押さえ」。受取人が preimage を出せば確定(settle)、出せなければ期限切れで巻き戻る(fail)</li>
-        </ul>
-      </div>
-
-      <div className="help-box">
-        <strong>🔄 なぜリング接続？</strong>
-        <ul>
-          <li>各ノードを <b>環状</b> につなぐ（alice→bob→carol→dave→alice）。隣同士しか直接チャネルを持たない</li>
-          <li>離れたノード宛は <b>マルチホップ</b> になる。例: alice→carol は <b>2通りの2ホップ経路</b>（alice→bob→carol / alice→dave→carol）があり、LND が手数料・流動性で選ぶ</li>
-          <li>「経路選択」モードで両経路を比較できる。中継チャネルの local 残高が足りないと <i>no_route</i> になり、別経路や中継の流動性が必要だと体感できる</li>
-          <li>リングは <b>双方向に回れる</b>ため、流動性が一方向に偏っても逆回りで送れる場合がある（流動性管理の学習に向く）</li>
-        </ul>
       </div>
 
       <div className="controls">
@@ -904,6 +774,157 @@ export default function App() {
         </div>
       </div>
 
+      </aside>
+
+      <main>
+
+      {error && <div className="banner error-banner">⚠️ {error}</div>}
+      {info && <div className="banner info-banner">{info}</div>}
+
+      {/* 凡例 */}
+      <div className="legend">
+        {nodeDefs.map((n) => (
+          <span key={n.name}>
+            <span className="dot" style={{ background: n.color }} />{" "}
+            {n.name[0].toUpperCase() + n.name.slice(1)}
+          </span>
+        ))}
+        <span className="sep">|</span>
+        <span><span className="dot" style={{ background: "#56d364" }} /> Local (自分側残高 = 送れる量)</span>
+        <span><span className="dot" style={{ background: "#f85149" }} /> Remote (相手側残高 = 受け取れる量)</span>
+      </div>
+
+      <div className="viz">
+        <svg viewBox={`0 0 ${layout.size} ${layout.size}`} style={{ width: "100%", height: "auto", maxHeight: 600 }}>
+          {/* チャネル線: 二色分割で local/remote 比率を可視化 */}
+          {channelLines.map(({ from, fromName, to, toName, ch, key }) => {
+            const p = positions[from];
+            const q = positions[to];
+            const total = ch.capacity || 1;
+            const localFrac = ch.local_balance / total; // fromName 視点
+            const mx = p.x + (q.x - p.x) * localFrac;
+            const my = p.y + (q.y - p.y) * localFrac;
+            const midX = (p.x + q.x) / 2;
+            const midY = (p.y + q.y) / 2;
+            // ラベルを線の法線方向 (リング外側) に押し出して衝突回避
+            const dx = q.x - p.x;
+            const dy = q.y - p.y;
+            const len = Math.hypot(dx, dy) || 1;
+            let nx = -dy / len;
+            let ny = dx / len;
+            const outSign = (midX - layout.cx) * nx + (midY - layout.cy) * ny >= 0 ? 1 : -1;
+            nx *= outSign;
+            ny *= outSign;
+            const lx = midX + nx * 34;
+            const ly = midY + ny * 34;
+            return (
+              <g key={key}>
+                {/* local 部分 (緑) */}
+                <line x1={p.x} y1={p.y} x2={mx} y2={my} stroke="#56d364" strokeWidth={6} strokeLinecap="round" />
+                {/* remote 部分 (赤) */}
+                <line x1={mx} y1={my} x2={q.x} y2={q.y} stroke="#f85149" strokeWidth={6} strokeLinecap="round" />
+                {/* 分割マーカー */}
+                <circle cx={mx} cy={my} r={6} fill="#e3b341" stroke="#0d1117" strokeWidth={2} />
+                {/* ラベル引出し線 */}
+                <line x1={midX} y1={midY} x2={lx} y2={ly} stroke="#30363d" strokeWidth={1} />
+                {/* ラベル: 両ノード視点で送れる量 */}
+                <g transform={`translate(${lx}, ${ly})`}>
+                  <rect
+                    x={-76}
+                    y={-24}
+                    width={152}
+                    height={ch.policy ? 60 : 44}
+                    rx={6}
+                    fill="#161b22"
+                    stroke="#30363d"
+                  />
+                  <text x={0} y={-9} className="ch-label" textAnchor="middle">
+                    Cap {ch.capacity.toLocaleString()} {ch.active ? "🟢" : "⏳"}
+                  </text>
+                  <text x={-71} y={9} className="ch-side ch-local" textAnchor="start">
+                    {fromName}→ {ch.local_balance.toLocaleString()}
+                  </text>
+                  <text x={71} y={9} className="ch-side ch-remote" textAnchor="end">
+                    {toName}→ {ch.remote_balance.toLocaleString()}
+                  </text>
+                  {ch.policy && (
+                    <text x={0} y={28} className="ch-policy" textAnchor="middle">
+                      {fromName} fee {ch.policy.base_fee_msat}msat + {ch.policy.fee_rate_ppm}ppm · cltv {ch.policy.cltv_delta}
+                    </text>
+                  )}
+                </g>
+              </g>
+            );
+          })}
+          {/* ノード */}
+          {NODE_ORDER.map((name, i) => {
+            const node = snap?.nodes[name];
+            const p = positions[i];
+            const off = node?.balance_sat ?? 0;
+            const on = node?.wallet_sat ?? 0;
+            const { ux, uy } = outward(i);
+            // 残高ボックスをノードからリング外側へ配置 (隣ノード・線との重なり回避)
+            const bx = p.x + ux * (layout.nodeR + 34);
+            const by = p.y + uy * (layout.nodeR + 34);
+            return (
+              <g key={name}>
+                <circle cx={p.x} cy={p.y} r={layout.nodeR} fill={colorOf(name)} stroke="#fff" strokeWidth={3} />
+                <text x={p.x} y={p.y + 5} className="node-label">{name.toUpperCase()}</text>
+                <g transform={`translate(${bx}, ${by})`}>
+                  <rect x={-72} y={-15} width={144} height={42} rx={4} fill="#161b22" stroke="#30363d" />
+                  <text x={0} y={-1} className="node-balance" textAnchor="middle">
+                    ⚡ off-chain: {off.toLocaleString()}
+                  </text>
+                  <text x={0} y={15} className="node-balance dim" textAnchor="middle">
+                    ⛓ on-chain: {on.toLocaleString()}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+          {/* 送金アニメ */}
+          {anims.map((a) => {
+            const fi = NODE_ORDER.indexOf(a.from as NodeName);
+            const ti = NODE_ORDER.indexOf(a.to as NodeName);
+            if (fi < 0 || ti < 0) return null;
+            const p = positions[fi];
+            const q = positions[ti];
+            return (
+              <circle key={a.id} r={10} fill="#ffd33d" stroke="#fff" strokeWidth={2}>
+                <animate attributeName="cx" from={p.x} to={q.x} dur={`${HOP_MS}ms`} fill="freeze" />
+                <animate attributeName="cy" from={p.y} to={q.y} dur={`${HOP_MS}ms`} fill="freeze" />
+              </circle>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="help-box">
+        <strong>用語ミニ解説</strong>
+        <ul>
+          <li><b>Capacity</b>: チャネルの総容量 = 開設時に lock した sat。開設後は増減せず、local と remote の間を移動するだけ</li>
+          <li><b>Local balance (緑)</b>: 自分が今 <i>送れる</i> 量 = アウトバウンド流動性</li>
+          <li><b>Remote balance (赤)</b>: 相手が今 <i>送ってくる</i> ことができる量 = 自分の <i>インバウンド流動性</i>（＝自分が<i>受け取れる</i>量）</li>
+          <li><b>push_amt</b>: チャネル開設時に相手側へ渡す初期残高。これがないと開設直後は受信側の inbound が 0 で受け取れない</li>
+          <li><b>Off-chain (⚡)</b>: 全チャネルの local_balance 合計 = LNで送金できる総量。送受信でチャネル内を移動するだけでオンチェーン取引は発生しない</li>
+          <li><b>On-chain (⛓)</b>: ウォレットUTXOの確認済残高 = 新規チャネル開設の原資</li>
+          <li><b>マルチホップ</b>: 直接チャネルがなくても中継ノード経由で送金可能。中継ノードは <b>手数料</b> を取る</li>
+          <li><b>手数料 (fee)</b>: 中継ノードが1ホップごとに取る報酬。base fee（固定）+ rate（金額比例）。経路の合計が total_fees</li>
+          <li><b>CLTV / time_lock</b>: HTLC の有効期限（ブロック数）。各ホップで少しずつ積まれ、失敗時の資金回収を保証する安全装置</li>
+          <li><b>HTLC</b>: Hashed Time-Locked Contract。送金途中の「条件付き仮押さえ」。受取人が preimage を出せば確定(settle)、出せなければ期限切れで巻き戻る(fail)</li>
+        </ul>
+      </div>
+
+      <div className="help-box">
+        <strong>🔄 なぜリング接続？</strong>
+        <ul>
+          <li>各ノードを <b>環状</b> につなぐ（alice→bob→carol→dave→alice）。隣同士しか直接チャネルを持たない</li>
+          <li>離れたノード宛は <b>マルチホップ</b> になる。例: alice→carol は <b>2通りの2ホップ経路</b>（alice→bob→carol / alice→dave→carol）があり、LND が手数料・流動性で選ぶ</li>
+          <li>「経路選択」モードで両経路を比較できる。中継チャネルの local 残高が足りないと <i>no_route</i> になり、別経路や中継の流動性が必要だと体感できる</li>
+          <li>リングは <b>双方向に回れる</b>ため、流動性が一方向に偏っても逆回りで送れる場合がある（流動性管理の学習に向く）</li>
+        </ul>
+      </div>
+
       <div className="controls">
         <h2>📈 オフチェーン残高推移 <span className="hint inline">(直近 {HISTORY_MAX} 点 × 3秒)</span></h2>
         <div style={{ width: "100%", height: 240 }}>
@@ -979,6 +1000,9 @@ export default function App() {
             {p.error ? ` · ${p.error}` : ""}
           </div>
         ))}
+      </div>
+
+      </main>
       </div>
     </div>
   );

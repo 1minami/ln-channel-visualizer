@@ -5,9 +5,38 @@ body {
   background: #0d1117;
   color: #c9d1d9;
 }
-.app { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.app { max-width: 1600px; margin: 0 auto; padding: 16px 24px 24px; }
 h1 { margin: 0 0 4px; font-size: 24px; }
-.subtitle { color: #8b949e; font-size: 13px; margin-bottom: 16px; }
+.subtitle { color: #8b949e; font-size: 13px; }
+
+/* 上部バー: トグル + タイトル */
+.topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.sidebar-toggle {
+  background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+  border-radius: 6px; padding: 8px 12px; font-size: 13px; white-space: nowrap;
+}
+.sidebar-toggle:hover:not(:disabled) { background: #30363d; }
+
+/* 2カラム: 左=操作パネル(sidebar) / 右=可視化(main) */
+.layout { display: flex; gap: 20px; align-items: flex-start; }
+.sidebar {
+  flex: 0 0 380px; min-width: 0;
+  position: sticky; top: 16px;
+  max-height: calc(100vh - 32px); overflow-y: auto;
+}
+.main { flex: 1 1 auto; min-width: 0; }
+
+/* 折りたたみ時はサイドバーを隠してメインを全幅に */
+.app.sidebar-collapsed .sidebar { display: none; }
+
+/* サイドバー内の最初の .controls は上マージン不要 */
+.sidebar > .controls:first-child { margin-top: 0; }
+
+/* 狭幅では縦積みに切替（sticky 解除） */
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  .sidebar { flex-basis: auto; width: 100%; position: static; max-height: none; }
+}
 
 .banner { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
 .error-banner { background: #f85149; color: #fff; }
