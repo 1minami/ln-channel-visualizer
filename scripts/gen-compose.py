@@ -110,7 +110,7 @@ def _app_service(nodes: list[dict]) -> str:
 {depends}
     environment:
 {env_block}
-      POLL_INTERVAL: "3"
+      POLL_INTERVAL: "10"
       LOG_LEVEL: INFO
       BITCOIND_RPC_URL: http://bitcoind:18443
       BITCOIND_RPC_USER: polaruser

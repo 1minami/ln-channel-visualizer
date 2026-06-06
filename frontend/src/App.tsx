@@ -926,7 +926,7 @@ export default function App() {
       </div>
 
       <div className="controls">
-        <h2>📈 オフチェーン残高推移 <span className="hint inline">(直近 {HISTORY_MAX} 点 × 3秒)</span></h2>
+        <h2>📈 オフチェーン残高推移 <span className="hint inline">(直近 {HISTORY_MAX} 点 × 10秒)</span></h2>
         <div style={{ width: "100%", height: 240 }}>
           <ResponsiveContainer>
             <LineChart data={history}>

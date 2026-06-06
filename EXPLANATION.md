@@ -10,7 +10,7 @@ Lightning Network (LN) の regtest ノード群を可視化し、ブラウザか
 AliceとBobがテーブルに1枚のトレイ（Capacity）を置き、コインを左右に分けて置く。左がAliceの取り分（local）、右がBobの取り分（remote）。「送金」とはトレイの上でコインを相手側に押すだけ。**トレイのコイン総数（Capacity）は増えも減りもしない** — 内訳が動くだけ。これが「オンチェーン取引なしの送金」の正体。
 
 **アプリ全体 = 管制塔**
-`app`（FastAPI）が管制塔。複数の飛行機（LNDノード）に無線（REST API）で「今の高度（残高）は？」と問い合わせ、レーダー画面（React UI）に映す。さらに WebSocket で3秒ごとに自動更新し、送金リクエストも無線で飛ばす。
+`app`（FastAPI）が管制塔。複数の飛行機（LNDノード）に無線（REST API）で「今の高度（残高）は？」と問い合わせ、レーダー画面（React UI）に映す。さらに WebSocket で10秒ごとに自動更新し、送金リクエストも無線で飛ばす。
 
 **nodes.json = レシピの材料表（single source of truth）**
 1枚の材料表を、3つの料理人（docker-compose 生成・ネットワーク初期化・UI 描画）が全員同じものを見て動く。材料を1行足せば全員が追従する。
@@ -93,7 +93,7 @@ sequenceDiagram
 
 並行する2つの非同期タスク（lifespan で起動）:
 
-- `_balance_broadcaster` — 3秒ごとに全ノードの snapshot を取り WS 配信（接続クライアントがいる時だけ）。
+- `_balance_broadcaster` — 10秒ごとに全ノードの snapshot を取り WS 配信（接続クライアントがいる時だけ）。
 - `_htlc_listener`（ノード数ぶん）— HTLC イベントを stream で受け、切断時は指数バックオフで再接続。
 
 ---
@@ -135,7 +135,7 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
 - 🟢 **フロントの history が削除ノードの key を残す** — セッション中にノードを減らすと stale データが残る（実運用上ほぼ起きない）。
 
 ### パフォーマンス
-- 🟢 **snapshot は3秒に1回・全ノード4 API 並列** — N が小さいので問題なし。N が数十になると `asyncio.gather` の総数増で見直し対象。
+- 🟢 **snapshot は10秒に1回・全ノード4 API 並列** — N が小さいので問題なし。N が数十になると `asyncio.gather` の総数増で見直し対象。
 - 🟢 **HTLC イベントはメモリ上限50件** — `del RECENT_HTLC_EVENTS[:-HTLC_MAX]` で抑制済み。
 
 ### 可読性

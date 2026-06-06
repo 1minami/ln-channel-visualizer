@@ -30,7 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ln-channel-visualizer")
 
-POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "3"))
+POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "10"))
 
 NODES_JSON = Path(__file__).parent / "nodes.json"
 

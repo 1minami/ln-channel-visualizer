@@ -186,7 +186,7 @@ services:
       LND_DAVE_REST: https://lnd-dave:8080
       LND_DAVE_TLS_CERT_PATH: /lnd/dave/tls.cert
       LND_DAVE_MACAROON_PATH: /lnd/dave/data/chain/bitcoin/regtest/admin.macaroon
-      POLL_INTERVAL: "3"
+      POLL_INTERVAL: "10"
       LOG_LEVEL: INFO
       BITCOIND_RPC_URL: http://bitcoind:18443
       BITCOIND_RPC_USER: polaruser

@@ -84,7 +84,7 @@ backend の `.env` は LND コンテナを 直接参照する場合 `https://loc
 | GET | `/api/snapshot` | 全ノードの info/channels/balance |
 | GET | `/api/payments` | 送金履歴 (最新50件) |
 | POST | `/api/send` | 送金実行 `{source, dest, amount_sat}` |
-| WS | `/ws/balances` | 残高ストリーム (3秒間隔) |
+| WS | `/ws/balances` | 残高ストリーム (10秒間隔) |
 | GET | `/healthz` | ヘルスチェック |
 
 ## ノード追加手順
