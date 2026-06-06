@@ -92,7 +92,7 @@ sequenceDiagram
 1. **受取人がインボイスを作る** — 送金は「受取人が請求書(bolt11)を出し、送信者が払う」プル型。`dst.add_invoice()`。
 2. **送信者が払う** — `src.send_payment_sync(bolt11)`。LND が裏で経路を探し、HTLC を張って送る。
 3. **結果を記録** — `record_payment()` で `data/visualizer.db` の `payments` テーブルに追記。
-4. **UI に経路を返す** — フロントが hops を受け取り、黄ドットを `pubkeyToName()` で名前解決しながら1ホップずつアニメ。
+4. **UI に経路を返す** — フロントが hops を受け取り、黄ドットを `pubkeyToName()` で名前解決しながら1ホップずつアニメ。送金後は**手数料サマリーカード**（`feeSummary` state）に経路・各中継の取り分（hop 毎 `fee`）・合計・送金額比を表示。
 5. **ミッション判定** — `runMissionChecks({api, source, dest, status, hops, fee, path})` を全ミッションに渡す（後述 §4）。
 6. **HTLC ストリーム（別系統）** — 各ノードの `/v2/router/htlcevents` を `_htlc_listener` が読み続け、`forward`/`settle`/`fail` を WebSocket で全クライアントに broadcast。
 
@@ -197,6 +197,7 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
 ## 8. ロードマップ
 
 ### Phase 1（すぐやる・低コスト高効果）
+- ✅ **手数料サマリーカード** — 送金後に経路・各中継の取り分・合計・送金額比を表示（`send`/`pay_invoice`/`send_route` 対応）。実装済み。
 - **選択経路のグラフ強調** — 「経路選択」で選んだ hops を SVG 上で色付きハイライト。⑥（bob/dave 撃ち分け）の達成も視覚的に。期待効果: 経路と流動性の関係が直感化。工数 **S**。
 - **ミッション進捗の localStorage 永続化** — リロードで消えない。期待効果: 学習の継続性。工数 **S**。
 - **解説 help-box を `docs.ts` へ外出し** — SSOT 化。期待効果: ミッションと解説の整合維持が楽に。工数 **S**。

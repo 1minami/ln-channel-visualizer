@@ -54,6 +54,15 @@ type RouteCandidate = {
 };
 type SendMode = "internal" | "external_invoice" | "route_select";
 
+// 送金後の手数料サマリー（経路と各中継の取り分を可視化）
+type FeeSummaryHop = { name: string; fee: number; amtToForward: number };
+type FeeSummary = {
+  amount: number; // 送金額 sat
+  path: string[]; // 経路ノード名列（source 含む）
+  hops: FeeSummaryHop[]; // 各ホップ（受取人含む。中継は fee>0）
+  total: number; // 合計手数料 sat
+} | null;
+
 type NodeName = string;
 const FALLBACK_COLOR = "#8b949e";
 const HISTORY_MAX = 60;
@@ -134,6 +143,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // メイン領域のタブ: ネットワーク図 / 解説Q&A
   const [mainTab, setMainTab] = useState<"network" | "docs">("network");
+
+  // 直近送金の手数料サマリー（経路・各中継の取り分を可視化。新規送金開始でクリア）
+  const [feeSummary, setFeeSummary] = useState<FeeSummary>(null);
 
   // 学習ミッション: 達成状態（セッション内のみ。リロードでリセット）
   const [missionDone, setMissionDone] = useState<Record<string, boolean>>({});
@@ -247,6 +259,7 @@ export default function App() {
   const send = async () => {
     setSending(true);
     setError("");
+    setFeeSummary(null);
     try {
       const r = await fetch("/api/send", {
         method: "POST",
@@ -264,6 +277,16 @@ export default function App() {
           animateHops(source, hops);
           setInfo(`✅ 経路: ${hopNames.join(" → ")} · 手数料 ${body.total_fees} sat`);
         }
+        setFeeSummary({
+          amount,
+          path: hopNames,
+          hops: hops.map((h: any) => ({
+            name: pubkeyToName(h.pub_key) ?? h.pub_key.slice(0, 10) + "...",
+            fee: h.fee ?? 0,
+            amtToForward: h.amt_to_forward ?? 0,
+          })),
+          total: body.total_fees ?? 0,
+        });
         runMissionChecks({ api: "send", source, dest, status: "success", hops: hops.length, fee: body.total_fees, path: hopNames });
       }
     } catch (e) {
@@ -327,6 +350,7 @@ export default function App() {
   const payExternal = async () => {
     setSending(true);
     setError("");
+    setFeeSummary(null);
     try {
       const r = await fetch("/api/pay_invoice", {
         method: "POST",
@@ -341,6 +365,17 @@ export default function App() {
         const body = await r.json();
         setInfo(`✅ 外部送金 ${body.amount_sat} sat → ${body.dest} · 手数料 ${body.total_fees}`);
         setExtInvoice("");
+        const extHops = body.hops || [];
+        setFeeSummary({
+          amount: body.amount_sat ?? 0,
+          path: [source, ...extHops.map((h: any) => pubkeyToName(h.pub_key) ?? h.pub_key.slice(0, 10) + "...")],
+          hops: extHops.map((h: any) => ({
+            name: pubkeyToName(h.pub_key) ?? h.pub_key.slice(0, 10) + "...",
+            fee: h.fee ?? 0,
+            amtToForward: h.amt_to_forward ?? 0,
+          })),
+          total: body.total_fees ?? 0,
+        });
         runMissionChecks({
           api: "pay_invoice",
           source,
@@ -385,6 +420,7 @@ export default function App() {
   const sendOnRoute = async (rt: RouteCandidate) => {
     setSending(true);
     setError("");
+    setFeeSummary(null);
     try {
       const r = await fetch("/api/send_route", {
         method: "POST",
@@ -397,6 +433,12 @@ export default function App() {
       } else {
         setInfo(`✅ 経路指定送金成功 · 手数料 ${rt.total_fees} sat`);
         animateHops(source, rt.hops.map((h) => ({ pub_key: h.pub_key })));
+        setFeeSummary({
+          amount,
+          path: [source, ...rt.hops.map((h) => h.name)],
+          hops: rt.hops.map((h) => ({ name: h.name, fee: h.fee, amtToForward: h.amt_to_forward })),
+          total: rt.total_fees,
+        });
         runMissionChecks({ api: "send", source, dest, status: "success", hops: rt.hops.length, fee: rt.total_fees, path: [source, ...rt.hops.map((h) => h.name)] });
       }
     } catch (e) {
@@ -784,6 +826,32 @@ export default function App() {
 
       {error && <div className="banner error-banner">⚠️ {error}</div>}
       {info && <div className="banner info-banner">{info}</div>}
+
+      {feeSummary && (() => {
+        const fs = feeSummary;
+        const relays = fs.hops.filter((h) => h.fee > 0);
+        const pct = fs.amount > 0 ? (fs.total / fs.amount) * 100 : 0;
+        return (
+          <div className="fee-card">
+            <button className="fee-card-close" onClick={() => setFeeSummary(null)} aria-label="閉じる">×</button>
+            <div className="fee-card-head">💸 送金完了 <b>{fs.amount.toLocaleString()} sat</b></div>
+            <div className="fee-card-path">{fs.path.join(" → ")}</div>
+            {relays.length > 0 ? (
+              <ul className="fee-card-hops">
+                {relays.map((h, i) => (
+                  <li key={i}><span className="fee-dot" />{h.name} 中継手数料 <b>+{h.fee.toLocaleString()} sat</b></li>
+                ))}
+              </ul>
+            ) : (
+              <div className="fee-card-direct">隣接ノードへの直接チャネル → 中継なし・手数料 0 sat</div>
+            )}
+            <div className="fee-card-total">
+              合計手数料 <b>{fs.total.toLocaleString()} sat</b>
+              {fs.amount > 0 && <span className="fee-card-pct"> （送金額の {pct.toFixed(pct > 0 && pct < 0.01 ? 4 : 2)}%）</span>}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="main-tabs">
         <button className={`main-tab${mainTab === "network" ? " active" : ""}`} onClick={() => setMainTab("network")}>⚡ ネットワーク</button>

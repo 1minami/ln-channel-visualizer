@@ -50,6 +50,31 @@ h1 { margin: 0 0 4px; font-size: 24px; }
 .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .legend .sep { color: #30363d; }
 
+/* 手数料サマリーカード (送金後の経路・中継手数料の可視化) */
+.fee-card {
+  position: relative; background: #161b22; border: 1px solid #1f6feb;
+  border-left: 4px solid #1f6feb; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;
+}
+.fee-card-close {
+  position: absolute; top: 6px; right: 8px; background: transparent; border: none;
+  color: #8b949e; font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer;
+}
+.fee-card-close:hover { color: #c9d1d9; }
+.fee-card-head { font-size: 15px; color: #c9d1d9; margin-bottom: 4px; }
+.fee-card-head b { color: #58a6ff; }
+.fee-card-path { font-family: monospace; font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+.fee-card-hops { list-style: none; margin: 0 0 8px; padding: 0; }
+.fee-card-hops li { font-size: 13px; color: #c9d1d9; padding: 2px 0; }
+.fee-card-hops b { color: #f0883e; }
+.fee-card .fee-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #f0883e; margin-right: 8px; vertical-align: middle;
+}
+.fee-card-direct { font-size: 13px; color: #3fb950; margin-bottom: 8px; }
+.fee-card-total { font-size: 14px; color: #c9d1d9; border-top: 1px solid #30363d; padding-top: 8px; }
+.fee-card-total b { color: #f0883e; }
+.fee-card-pct { color: #8b949e; font-size: 13px; }
+
 /* メイン領域タブ (ネットワーク / 解説) */
 .main-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid #30363d; }
 .main-tab {
