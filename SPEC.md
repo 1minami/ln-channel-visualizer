@@ -1,125 +1,130 @@
-# SPEC — Phase 1 ロードマップ実装
+# SPEC — ミッション機能（学習クエスト）
 
-EXPLANATION.md セクション7「Phase 1（すぐやる・低コスト高効果）」3機能を実装する。
+LN 学習効果を高めるため、既存操作（送金・インボイス・チャネル開設）を題材にした
+ガイド式ミッションを追加する。初版は **A系（ガイド）3課題 + 障害D 再現容易版1課題 = 計4課題**。
+
+判定は **frontend 完結（自動判定優先）**、進捗は **セッション内のみ（永続化なし）**。
 
 ---
 
 ## 受入条件
 
-### 機能1: インボイス生成 UI
-- 任意ノードで bolt11 を生成し、画面に表示・コピーできる。
-- backend に `POST /api/invoice` を追加。`{node, amount_sat, memo?}` → `{payment_request, r_hash}`。
-- 生成した bolt11 を「外部 bolt11 貼付」モードに流用できる（プル型送金を体感）。
+### 全体
+- 画面にミッションパネルを表示。4課題のチェックリスト + 進捗（n/4）+ 各課題のヒント展開。
+- 各課題は送金系 API 応答（lastSend）から **自動で達成判定** し、達成で✅点灯 + 祝福バナー。
+  - 初版は lastSend のみで4課題を判定可能なため WS snapshot/htlc 発火は使わない（簡易版）。
+- リロードで進捗はリセットされる（永続化しない）。
+- ミッション定義はフロント同梱の `missions.ts` 定数（backend 変更なし）。
 
-### 機能2: peer host 自動補完
-- `GET /api/nodes` が各ノードに `host`（= `lnd-<name>`）を含めて返す。
-- チャネル開設フォームの「To」を変更すると「Peer host」が自動で `lnd-<dest>` に更新される。
-- 手動編集は引き続き可能（自動補完は上書き、ユーザー編集を妨げない）。
+### 課題1: 初送金（alice→bob）
+- `/api/send` 応答が `status==success && source=="alice" && dest=="bob"` で達成。
 
-### 機能3: チャネルポリシー表示
-- 各チャネル線のラベルに base_fee / fee_rate / CLTV delta を表示。
-- backend が各チャネルの `chan_id` とポリシーを snapshot に含める。
+### 課題2: インボイス理解（bob 生成 → alice が外部送金で支払い）
+- 「📨 インボイス生成」で bob の bolt11 を発行 →「外部送金にセット」→ alice が支払い。
+- `/api/pay_invoice` 応答が `status==success && dest=="bob"` で達成。
+  - 割り切り: `/api/send`（内部送金）と区別するため **pay_invoice 経由の成功**を判定キーにする。
+    「インボイス生成パネルを使った支払い体験」を達成とみなす。
+
+### 課題3: マルチホップ（alice→carol 疎通）
+- 送金応答（`/api/send` or `/api/pay_invoice`）が `dest=="carol" && hops.length>=2` で達成。
+  - リング接続（alice-bob-carol-dave）で alice→carol は中継1つ以上を通る。
+
+### 課題4: inbound 不足を体験（障害D・再現容易版）
+- 段階達成:
+  1. carol 宛送金が一度 `failed`（inbound/no_route 等）になるのを観測 → `carolFailSeen` フラグを立てる。
+  2. その後 carol 宛送金が `success` する（逆送金や push でinbound確保後）→ 達成。
+- フラグは `missionFlagsRef`（ref）で保持し、check 内で副作用更新。
+- pay_invoice の失敗応答に dest は含まれないため、fail 観測は内部送金（/api/send）側で拾う。
 
 ---
 
 ## 非目標
-- 認証・LANバインド制限（Phase 3）。
-- `/v2/router/send` 移行、MPP（Phase外）。
-- インボイスの有効期限/金額0（amountless）対応。生成は固定額のみ。
-- ポリシーの編集（updatechanpolicy）。表示のみ。
-- App.tsx のコンポーネント分割（可読性提案、今回スコープ外）。
+- 進捗の永続化、XP / バッジ / 実績システム。
+- パズル/チャレンジ系（B）、クイズ（C）。
+- CLTV 期限切れ課題（regtest の時間操作が必要で再現困難）。
+- フォースクローズ/ペナルティ（Phase3 Watchtower 連動）。
+- backend 判定 / `GET /api/missions` エンドポイント（フロント定数で足りる）。
+- 課題達成条件の厳密な順序強制（課題4は観測フラグの組合せで判定）。
+- App.tsx のコンポーネント分割（別途・スコープ外）。
 
 ---
 
 ## 仕様詳細
 
-### 機能1: インボイス生成
-**backend (`main.py`)**
+### missions.ts（新規 / フロント）
+```ts
+type MissionCheckInput = {
+  lastSend?: { api: "send" | "pay_invoice"; source: string; dest: string;
+               status: string; hops: number };
+  snapshot?: Snapshot;          // WS で受信した最新 snapshot
+  htlc?: HtlcEvent;             // 直近の HTLC イベント
+  flags: Record<string, boolean>; // 課題横断の観測フラグ（例 carolFailSeen）
+};
+
+type Mission = {
+  id: string;
+  title: string;
+  hint: string;                 // EXPLANATION のアナロジー流用
+  // 達成なら true。副作用で input.flags を更新してよい（観測フラグ蓄積）
+  check: (input: MissionCheckInput) => boolean;
+};
+
+export const MISSIONS: Mission[] = [ /* m1..m4 */ ];
 ```
-class InvoiceRequest(BaseModel):
-    node: str
-    amount_sat: int
-    memo: str = ""
 
-POST /api/invoice
-  - node が CLIENTS になければ 404
-  - amount_sat <= 0 なら 400
-  - dst.add_invoice(amount_sat, memo) を呼ぶ
-  - return {payment_request, r_hash}
-```
-`lnd_client.add_invoice` は既存（変更不要）。
+### App.tsx（既存 / フロント）
+- state 追加: `missionDone: Record<string, boolean>`、`missionFlags: Record<string, boolean>`。
+- 判定の発火点:
+  - `/api/send`・`/api/pay_invoice` 応答ハンドラ内で `MissionCheckInput.lastSend` を作り全 mission `check` を回す。
+  - WS `snapshot` / `htlc` 受信時にも `check` を回す（課題4の fail 観測など）。
+- 達成時: `missionDone[id]=true` をセット、未達→達成の遷移でトースト表示。
+- ミッションパネル: タイトル / ✅or☐ / 「ヒント」開閉 / 進捗 `done/4`。
+  - 既存 SVG リング・各操作パネルと同列に配置（左サイド or 上部の新カード）。
 
-**frontend (`App.tsx`)**
-- 「💸 送金」パネル付近に新パネル「📨 インボイス生成」。
-- node select + amount(number) + memo(text) + 「生成」ボタン。
-- 結果 bolt11 を readonly textarea に表示 + 「コピー」ボタン（`navigator.clipboard`）。
-- 「外部送金にセット」ボタン: `sendMode="external_invoice"` + `extInvoice` に流し込む。
-
-### 機能2: peer host 自動補完
-**backend (`main.py`)**
-- `_node_defs()` を import 時1回読みに集約（現状 `NODE_NAMES`/`NODE_COLORS` で2回 read_text → 1回に。EXPLANATION 改善提案🟡も同時解消）。
-- `NODE_HOSTS: dict[str,str] = {name: f"lnd-{name}" for name in NODE_NAMES}`。
-- `/api/nodes` の各要素に `"host": NODE_HOSTS[name]` を追加。
-  - 根拠: docker-compose で全 LND が `--listen=0.0.0.0:9735`、Polar内DNS名 `lnd-<name>` で解決。p2p 公開ポート(9736+)はホスト側のみ、コンテナ間通信には不要。
-
-**frontend (`App.tsx`)**
-- `NodeDef` 型に `host?: string` 追加。
-- `chDest` の `onChange` で host も更新: `setChHost(hostOf(value))`。`hostOf` は nodeDefs から引く（fallback `lnd-<name>`）。
-- 初期化（`/api/nodes` fetch後）も `hostOf` 使用。
-
-### 機能3: チャネルポリシー表示
-**backend (`lnd_client.py`)**
-```
-async def get_chan_info(chan_id: str) -> dict:
-    GET /v1/graph/edge/{chan_id}
-```
-**backend (`main.py`) `_snapshot`**
-- 各 channel に `chan_id`（= `ch.get("chan_id")`）を追加。
-- chan_id が "0"/空（未confirm）以外なら `get_chan_info` を呼び、自ノード pubkey が node1_pub か node2_pub かを判定して**自分が課すポリシー**を抽出:
-  - `policy = {base_fee_msat, fee_rate_ppm, cltv_delta}`
-- 失敗・未確定時は `policy: null`。
-- 呼び出しは `asyncio.gather` でチャネル単位に並列。ポリシーは `CHAN_POLICY_CACHE[chan_id]` に簡易キャッシュ（毎snapshotの再取得を抑制、regtestで変動しないため）。
-
-**frontend (`App.tsx`)**
-- `Channel` 型に `chan_id?: string`, `policy?: {base_fee_msat,fee_rate_ppm,cltv_delta}|null` 追加。
-- チャネルラベル rect を縦に拡張し、最下行に
-  `fee {base}msat + {ppm}ppm · cltv {delta}` を追記（policy あるときのみ）。
+### 判定材料の確認（実装済みで利用可能）
+- `/api/send` 応答: `status, hops[]`（main.py 335-341）。source/dest はリクエスト側で保持。
+- `/api/pay_invoice` 応答: `status, dest(解決名), hops[]`（main.py 406-413）。
+- WS `snapshot`: `nodes[name].channels[].{remote_pubkey, local_balance, remote_balance, active}`。
+- WS `htlc`: `{node, event_type, kind, ...}`。
 
 ---
 
 ## 例外・境界
-- pending チャネル（chan_id="0"）: policy 取得しない、`null` 表示なし。
-- get_chan_info が graph 未伝播で 404: try/except で握り、`null`。
-- amount 0 / 負: backend 400、frontend ボタン disable。
-- clipboard 非対応環境: textarea を選択させる fallback（select()）。
+- 送金 fail（HTTP 502）時もフロントは応答本文/例外から `status:"failed"` を組み立てて `check` に渡す
+  （課題4の fail 観測に必須）。現状フロントの送金失敗ハンドリングを要確認 → 失敗時も lastSend を生成。
+- snapshot に `error` を含むノードがある場合、その channels 判定はスキップ（既存 `{"error":...}` 形式）。
+- 同一課題の重複達成: `missionDone[id]` が true なら再判定しても no-op（トースト二重表示を防ぐ）。
+- carol 宛 success が fail より先に起きた場合: 課題4は「fail 観測フラグ」が立つまで未達のまま
+  （意図通り — 失敗体験を経ていない）。
 
 ---
 
 ## テスト方針
-- ローカル Docker 起動で手動確認（ユーザー指定）:
-  1. `python scripts/gen-compose.py`（compose 変更なし想定だが整合確認）
-  2. `docker compose up -d --build`
-  3. `bash scripts/init-network.sh`
-  4. UI で: インボイス生成→外部送金で支払い / 開設To変更でhost自動入力 / チャネル線にfee表示
-- 既存自動テストなし。今回も pytest 追加は非目標（手動確認のみ）。
+- ローカル Docker 起動で手動確認（既存方針）:
+  1. `docker compose up -d --build`
+  2. `bash scripts/init-network.sh`
+  3. UI で4課題を順に実施し ✅ 点灯・進捗・トーストを確認:
+     - 課題1: alice→bob 送金
+     - 課題2: bob インボイス生成→外部送金で alice 支払い
+     - 課題3: alice→carol 送金（hops≥2）
+     - 課題4: carol 宛で一度 fail を作る→inbound確保→carol宛 success
+- 既存自動テストなし。pytest 追加は非目標（手動確認のみ）。
 
 ---
 
 ## 互換性
-- `/api/nodes` は既存キー（name,color）を維持し host を**追加**するのみ → 後方互換。
-- snapshot の channel に chan_id/policy を**追加** → フロント既存描画に影響なし。
-- 新エンドポイント追加のみ、既存エンドポイント挙動は不変。
+- backend 変更なし（API/snapshot/WS の形は不変）。
+- フロントは state 追加とパネル追加のみ。既存送金/チャネル/マイニング動作に影響なし。
 
 ---
 
 ## ロールバック
-- 各機能は独立。問題時は該当の追加コード（エンドポイント/パネル/policy取得）を削除すれば元に戻る。
-- DB スキーマ変更なし。
+- ミッションパネルと `missions.ts`、App.tsx の mission 関連 state/判定呼び出しを削除すれば元に戻る。
+- DB / backend / nodes.json 変更なし。
 
 ---
 
 ## 影響ファイル
-- `main.py` — `/api/invoice` 追加、`/api/nodes` に host、`_snapshot` に chan_id/policy、`_node_defs` 1回読み集約
-- `backend/lnd_client.py` — `get_chan_info` 追加
-- `frontend/src/App.tsx` — インボイス生成パネル、host 自動補完、ポリシーラベル
-- `EXPLANATION.md` — Phase 1 を「実装済み」に更新、改善提案🟡(_node_defs 2回読み)を解消済みに
+- `frontend/src/missions.ts` — 新規。4課題の定義と `check` 関数。
+- `frontend/src/App.tsx` — mission state、判定発火（send/pay/WS）、ミッションパネル UI。
+- `EXPLANATION.md` — §7 ロードマップに「ミッション機能（実装済み）」を追記。

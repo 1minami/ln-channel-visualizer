@@ -153,6 +153,15 @@ backend は起動時に `_node_defs()` で nodes.json を読み、`NODE_NAMES`/`
   - 補足: Polar 内 LND は全ノード `--listen=0.0.0.0:9735`。コンテナ間は DNS 名 `lnd-<name>` で解決でき p2p 公開ポート不要。
 - ✅ **チャネルポリシー表示** — 各チャネル線ラベル最下行に `{node} fee {base}msat + {ppm}ppm · cltv {delta}`。backend `_snapshot` が `chan_id` と「自分が課す」ポリシーを `/v1/graph/edge/{chan_id}` から取得（`CHAN_POLICY_CACHE` で再取得抑制）。
 
+### 学習ミッション（実装済み ✅）
+- ✅ **ガイド式ミッション4課題** — 「🎯 学習ミッション」パネル。既存操作を題材に自動でチェックが点く。
+  進捗はセッション内のみ（リロードでリセット）。判定は frontend 完結（`frontend/src/missions.ts`）、backend 変更なし。
+  - ① はじめての送金（alice→bob）/ ② インボイスで受け取る（bob 生成→alice が pay_invoice）
+  - ③ マルチホップ（alice→carol, hops≥2）/ ④ inbound 不足を体験して解消（carol 宛 fail→success）
+  - 判定材料は送金系 API 応答（`/api/send`・`/api/pay_invoice`・`/api/send_route` の status/dest/hops）。
+    課題④は「carol 宛 fail 観測」フラグ（`carolFailSeen`）を経た success で達成。
+  - 詳細仕様は `SPEC.md`。
+
 ### Phase 2（中工数・価値大）
 - **リバランス支援（循環送金）** — リング上を1周する自己送金で流動性を均す機能。`no_route` 解消を能動的に学べる。工数 **M**。
 - **HTLC イベントを SQLite 永続化 + フィルタ** — リロードで消えないログ + kind/ノード絞り込み。工数 **M**。

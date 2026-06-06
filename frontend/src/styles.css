@@ -66,6 +66,25 @@ button:hover:not(:disabled) { background: #2ea043; }
 .ch-list { margin-top: 12px; }
 .ch-list-group { margin-bottom: 12px; padding: 8px; background: #0d1117; border-radius: 4px; }
 
+.missions .mission-item {
+  padding: 8px 10px; margin-bottom: 6px; background: #0d1117;
+  border: 1px solid #30363d; border-radius: 6px;
+}
+.missions .mission-item.done { border-color: #2ea043; background: #0f1f14; }
+.mission-head { display: flex; align-items: center; gap: 8px; }
+.mission-check { font-size: 15px; }
+.mission-title { font-size: 13px; font-weight: 600; color: #c9d1d9; flex: 1; }
+.mission-item.done .mission-title { color: #56d364; }
+.mission-hint-toggle {
+  background: #21262d; border-color: #30363d; color: #8b949e;
+  font-size: 11px; padding: 3px 8px;
+}
+.mission-hint-toggle:hover:not(:disabled) { background: #30363d; }
+.mission-hint-body {
+  margin-top: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+  color: #adbac7; background: #161b22; border-radius: 4px;
+}
+
 .log { margin-top: 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
 .log h2 { font-size: 16px; margin: 0 0 12px; }
 .log-entry { font-family: monospace; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #21262d; }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { MISSIONS, type LastSend } from "./missions";
 
 type ChanPolicy = { base_fee_msat: number; fee_rate_ppm: number; cltv_delta: number };
 type Channel = {
@@ -129,6 +130,33 @@ export default function App() {
   const [invResult, setInvResult] = useState("");
   const [invBusy, setInvBusy] = useState(false);
 
+  // 学習ミッション: 達成状態（セッション内のみ。リロードでリセット）
+  const [missionDone, setMissionDone] = useState<Record<string, boolean>>({});
+  const [missionOpen, setMissionOpen] = useState<Record<string, boolean>>({});
+  // 課題横断の観測フラグ（例: carolFailSeen）。check 内で副作用更新するため ref で保持
+  const missionFlagsRef = useRef<Record<string, boolean>>({});
+
+  // 送金系ハンドラから呼ぶ。lastSend を全ミッションに渡し、未達→達成の遷移で祝福表示
+  const runMissionChecks = (lastSend: LastSend) => {
+    setMissionDone((prev) => {
+      const next = { ...prev };
+      const newly: string[] = [];
+      for (const m of MISSIONS) {
+        if (next[m.id]) continue;
+        try {
+          if (m.check({ lastSend, flags: missionFlagsRef.current })) {
+            next[m.id] = true;
+            newly.push(m.title);
+          }
+        } catch {
+          /* check の例外は無視（達成扱いにしない） */
+        }
+      }
+      if (newly.length) setInfo(`🎉 ミッション達成: ${newly.join(" / ")}`);
+      return next;
+    });
+  };
+
   // ノード定義を取得し、各セレクタの初期値を設定 (nodes.json 由来)
   useEffect(() => {
     fetch("/api/nodes")
@@ -222,6 +250,7 @@ export default function App() {
       });
       if (!r.ok) {
         setError(humanizePaymentError(await r.text()));
+        runMissionChecks({ api: "send", source, dest, status: "failed", hops: 0 });
       } else {
         const body = await r.json();
         const hops = body.hops || [];
@@ -230,6 +259,7 @@ export default function App() {
           const hopNames = [source, ...hops.map((h: any) => pubkeyToName(h.pub_key)).filter(Boolean)];
           setInfo(`✅ 経路: ${hopNames.join(" → ")} · 手数料 ${body.total_fees} sat`);
         }
+        runMissionChecks({ api: "send", source, dest, status: "success", hops: hops.length });
       }
     } catch (e) {
       setError(String(e));
@@ -300,10 +330,19 @@ export default function App() {
       });
       if (!r.ok) {
         setError(humanizePaymentError(await r.text()));
+        // 失敗応答に dest は含まれない（解決不能）。fail 観測は内部送金側で拾う
+        runMissionChecks({ api: "pay_invoice", source, dest: "", status: "failed", hops: 0 });
       } else {
         const body = await r.json();
         setInfo(`✅ 外部送金 ${body.amount_sat} sat → ${body.dest} · 手数料 ${body.total_fees}`);
         setExtInvoice("");
+        runMissionChecks({
+          api: "pay_invoice",
+          source,
+          dest: body.dest,
+          status: "success",
+          hops: (body.hops || []).length,
+        });
       }
     } catch (e) {
       setError(String(e));
@@ -345,10 +384,13 @@ export default function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ source, dest, amount_sat: amount, route: rt._raw }),
       });
-      if (!r.ok) setError(humanizePaymentError(await r.text()));
-      else {
+      if (!r.ok) {
+        setError(humanizePaymentError(await r.text()));
+        runMissionChecks({ api: "send", source, dest, status: "failed", hops: 0 });
+      } else {
         setInfo(`✅ 経路指定送金成功 · 手数料 ${rt.total_fees} sat`);
         animateHops(source, rt.hops.map((h) => ({ pub_key: h.pub_key })));
+        runMissionChecks({ api: "send", source, dest, status: "success", hops: rt.hops.length });
       }
     } catch (e) {
       setError(String(e));
@@ -463,6 +505,38 @@ export default function App() {
 
       {error && <div className="banner error-banner">⚠️ {error}</div>}
       {info && <div className="banner info-banner">{info}</div>}
+
+      {/* 学習ミッション */}
+      <div className="controls missions">
+        <h2>
+          🎯 学習ミッション{" "}
+          <span className="hint inline">
+            ({MISSIONS.filter((m) => missionDone[m.id]).length} / {MISSIONS.length} 達成)
+          </span>
+        </h2>
+        <p className="hint">
+          各操作を実際にやると自動でチェックが点く。進捗はセッション内のみ（リロードでリセット）。
+        </p>
+        {MISSIONS.map((m) => {
+          const done = !!missionDone[m.id];
+          const open = !!missionOpen[m.id];
+          return (
+            <div key={m.id} className={`mission-item${done ? " done" : ""}`}>
+              <div className="mission-head">
+                <span className="mission-check">{done ? "✅" : "⬜"}</span>
+                <span className="mission-title">{m.title}</span>
+                <button
+                  className="mission-hint-toggle"
+                  onClick={() => setMissionOpen((o) => ({ ...o, [m.id]: !o[m.id] }))}
+                >
+                  {open ? "ヒントを隠す" : "ヒント"}
+                </button>
+              </div>
+              {open && <div className="mission-hint-body">{m.hint}</div>}
+            </div>
+          );
+        })}
+      </div>
 
       {/* 凡例 */}
       <div className="legend">
