@@ -259,12 +259,12 @@ export default function App() {
       } else {
         const body = await r.json();
         const hops = body.hops || [];
+        const hopNames = [source, ...hops.map((h: any) => pubkeyToName(h.pub_key)).filter(Boolean)] as string[];
         if (hops.length > 0) {
           animateHops(source, hops);
-          const hopNames = [source, ...hops.map((h: any) => pubkeyToName(h.pub_key)).filter(Boolean)];
           setInfo(`✅ 経路: ${hopNames.join(" → ")} · 手数料 ${body.total_fees} sat`);
         }
-        runMissionChecks({ api: "send", source, dest, status: "success", hops: hops.length });
+        runMissionChecks({ api: "send", source, dest, status: "success", hops: hops.length, fee: body.total_fees, path: hopNames });
       }
     } catch (e) {
       setError(String(e));
@@ -347,6 +347,8 @@ export default function App() {
           dest: body.dest,
           status: "success",
           hops: (body.hops || []).length,
+          fee: body.total_fees,
+          path: [source, body.dest],
         });
       }
     } catch (e) {
@@ -395,7 +397,7 @@ export default function App() {
       } else {
         setInfo(`✅ 経路指定送金成功 · 手数料 ${rt.total_fees} sat`);
         animateHops(source, rt.hops.map((h) => ({ pub_key: h.pub_key })));
-        runMissionChecks({ api: "send", source, dest, status: "success", hops: rt.hops.length });
+        runMissionChecks({ api: "send", source, dest, status: "success", hops: rt.hops.length, fee: rt.total_fees, path: [source, ...rt.hops.map((h) => h.name)] });
       }
     } catch (e) {
       setError(String(e));
